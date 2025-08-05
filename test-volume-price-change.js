@@ -1,0 +1,99 @@
+const NFTTracker = require('./services/nftTracker');
+const config = require('./config');
+
+async function testVolumeAndPriceChange() {
+  console.log('🧪 Testing Volume and Price Change functionality...\n');
+  
+  const nftTracker = new NFTTracker();
+  
+  // Test collections with known data
+  const testCollections = [
+    { slug: 'cool-cats-nft', chain: 'Ethereum', name: 'Cool Cats' },
+    { slug: 'boredapeyachtclub', chain: 'Ethereum', name: 'Bored Ape Yacht Club' },
+    { slug: 'dropzone-mcade', chain: 'Base', name: 'THE DROPZONE' }
+  ];
+  
+  for (const collection of testCollections) {
+    console.log(`\n🔍 Testing ${collection.name} (${collection.slug}) on ${collection.chain}...`);
+    
+    try {
+      // Test collection info with stats
+      const collectionInfo = await nftTracker.getCollectionInfoBySlug(collection.slug, collection.chain);
+      
+      if (collectionInfo) {
+        console.log(`✅ Collection info found:`);
+        console.log(`   📊 Name: ${collectionInfo.name}`);
+        console.log(`   🎯 Floor Price: ${collectionInfo.floor_price || 'N/A'} ETH`);
+        console.log(`   📈 Total Volume: ${collectionInfo.total_volume || 'N/A'} ETH`);
+        console.log(`   📊 Total Sales: ${collectionInfo.total_sales || 'N/A'}`);
+        console.log(`   👥 Owners: ${collectionInfo.num_owners || 'N/A'}`);
+        console.log(`   💰 Average Price: ${collectionInfo.average_price || 'N/A'} ETH`);
+        
+        // Volume data
+        console.log(`\n📊 Volume Data:`);
+        console.log(`   24h Volume: ${collectionInfo.one_day_volume || 'N/A'} ETH`);
+        console.log(`   7d Volume: ${collectionInfo.seven_day_volume || 'N/A'} ETH`);
+        console.log(`   30d Volume: ${collectionInfo.thirty_day_volume || 'N/A'} ETH`);
+        
+        // Sales data
+        console.log(`\n📈 Sales Data:`);
+        console.log(`   24h Sales: ${collectionInfo.one_day_sales || 'N/A'}`);
+        console.log(`   7d Sales: ${collectionInfo.seven_day_sales || 'N/A'}`);
+        console.log(`   30d Sales: ${collectionInfo.thirty_day_sales || 'N/A'}`);
+        
+        // Social links
+        console.log(`\n🔗 Social Links:`);
+        console.log(`   Twitter: ${collectionInfo.twitter_username || 'N/A'}`);
+        console.log(`   Discord: ${collectionInfo.discord_url || 'N/A'}`);
+        console.log(`   Website: ${collectionInfo.project_url || 'N/A'}`);
+        
+      } else {
+        console.log(`❌ Collection info not found`);
+      }
+      
+      // Test stats separately
+      console.log(`\n🔍 Testing getCollectionStats...`);
+      const stats = await nftTracker.getCollectionStats(collection.slug, collection.chain);
+      
+      if (stats) {
+        console.log(`✅ Stats found:`);
+        console.log(`   🎯 Floor Price: ${stats.floor_price || 'N/A'} ETH`);
+        console.log(`   📈 Total Volume: ${stats.total_volume || 'N/A'} ETH`);
+        console.log(`   📊 Total Sales: ${stats.total_sales || 'N/A'}`);
+        console.log(`   👥 Owners: ${stats.num_owners || 'N/A'}`);
+        console.log(`   💰 Average Price: ${stats.average_price || 'N/A'} ETH`);
+        
+        // Volume data
+        console.log(`\n📊 Volume Data:`);
+        console.log(`   24h Volume: ${stats.one_day_volume || 'N/A'} ETH`);
+        console.log(`   7d Volume: ${stats.seven_day_volume || 'N/A'} ETH`);
+        console.log(`   30d Volume: ${stats.thirty_day_volume || 'N/A'} ETH`);
+        
+        // Volume changes
+        console.log(`\n📈 Volume Changes:`);
+        console.log(`   24h Volume Change: ${stats.one_day_volume_change || 'N/A'}`);
+        console.log(`   7d Volume Change: ${stats.seven_day_volume_change || 'N/A'}`);
+        console.log(`   30d Volume Change: ${stats.thirty_day_volume_change || 'N/A'}`);
+        
+        // Floor price changes
+        console.log(`\n🎯 Floor Price Changes:`);
+        console.log(`   24h Change: ${stats.floor_price_change_24h || 'N/A'}`);
+        console.log(`   7d Change: ${stats.floor_price_change_7d || 'N/A'}`);
+        console.log(`   30d Change: ${stats.floor_price_change_30d || 'N/A'}`);
+        
+      } else {
+        console.log(`❌ Stats not found`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error testing ${collection.name}:`, error.message);
+    }
+    
+    console.log('\n' + '─'.repeat(60));
+  }
+  
+  console.log('\n✅ Volume and Price Change test completed!');
+}
+
+// Run the test
+testVolumeAndPriceChange().catch(console.error); 
