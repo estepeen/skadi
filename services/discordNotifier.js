@@ -233,28 +233,35 @@ class DiscordNotifier {
             formattedPnl = pnl.toFixed(4);
           }
           
-                  if (isNaN(pnlUSD) || Math.abs(pnlUSD) < 1) {
-          formattedPnlUSD = '<$1';
-        } else {
-          formattedPnlUSD = Math.round(pnlUSD * 100) / 100;
-        }
+          // Format USD PnL - handle NaN and small values properly
+          if (isNaN(pnlUSD) || !isFinite(pnlUSD)) {
+            formattedPnlUSD = '<$1';
+          } else if (Math.abs(pnlUSD) < 1) {
+            formattedPnlUSD = '<$1';
+          } else {
+            formattedPnlUSD = Math.round(pnlUSD * 100) / 100;
+          }
           
-          // Format percentage
+          // Format percentage - handle NaN and small values
           const percentage = (pnl / buyPrice) * 100;
-          if (Math.abs(percentage) < 1) {
+          if (isNaN(percentage) || !isFinite(percentage)) {
+            percentageText = '<1%';
+          } else if (Math.abs(percentage) < 1) {
             percentageText = '<1%';
           } else {
             percentageText = percentage > 0 ? `+${percentage.toFixed(1)}%` : `${percentage.toFixed(1)}%`;
           }
           
           if (pnl > 0) {
-            pnlValue = `+${formattedPnl} ${displaySymbol} (+$${formattedPnlUSD})\n${percentageText}`;
+            pnlValue = `+${formattedPnl} ${displaySymbol}\n+$${formattedPnlUSD}\n${percentageText}`;
             pnlEmoji = '🤑'; // Money eyes for profit
           } else if (pnl < 0) {
-            pnlValue = `${formattedPnl} ${displaySymbol} (-$${Math.abs(formattedPnlUSD)})\n${percentageText}`;
+            // Handle the case where formattedPnlUSD is '<$1'
+            const usdDisplay = formattedPnlUSD === '<$1' ? '$1' : `$${Math.abs(parseFloat(formattedPnlUSD))}`;
+            pnlValue = `-${formattedPnl} ${displaySymbol}\n-${usdDisplay}\n${percentageText}`;
             pnlEmoji = '😢'; // Crying face for loss
           } else {
-            pnlValue = `0.0000 ${displaySymbol} ($0.00)\n0.0%`;
+            pnlValue = `0.0000 ${displaySymbol}\n$0.00\n0.0%`;
             pnlEmoji = '🫥'; // Dotted line face for no change
           }
         } else {
