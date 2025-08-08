@@ -13,12 +13,18 @@ class CSVReader {
       fs.createReadStream(this.filePath)
         .pipe(csv())
         .on('data', (row) => {
-          if (row.address && row.name) {
-            wallets.push({
-              address: row.address.toLowerCase(),
-              name: row.name
-            });
-          }
+          const rawAddress = (row.address || '').trim();
+          const rawName = (row.name || '').trim();
+
+          // Skip commented or invalid rows
+          if (!rawAddress || rawAddress.startsWith('#')) return;
+          if (!this.validateAddress(rawAddress)) return;
+          if (!rawName) return;
+
+          wallets.push({
+            address: rawAddress.toLowerCase(),
+            name: rawName
+          });
         })
         .on('end', () => {
           console.log(`Loaded ${wallets.length} wallets from CSV`);
