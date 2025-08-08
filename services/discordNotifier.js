@@ -85,40 +85,37 @@ class DiscordNotifier {
       }
     }
 
-    // Set color and action based on transaction type
+    // Set color and action based on transaction type (remove bulk/sweep/dump labels)
     let color, action, emoji;
     switch (type) {
-      case 'purchase': 
-        if (quantity >= 4) {
-          color = 0x00ff00; 
-          action = 'swept'; 
-          emoji = '🧹'; 
-        } else {
-          color = 0x00ff00; 
-          action = 'bought'; 
-          emoji = '🟢'; 
-        }
+      case 'purchase':
+        color = 0x00ff00;
+        action = 'bought';
+        emoji = '🟢';
         break;
-      case 'sale': 
-        // Check for paper hands (sold within 48h with >20% loss)
+      case 'sale': {
+        // Keep paper-hands signal, but ignore quantity-based labels
         const isPaperHands = this.isPaperHands(transactionData);
-        
         if (isPaperHands) {
-          color = 0xff0000; 
-          action = 'papered'; 
-          emoji = '🧻'; 
-        } else if (quantity >= 3) {
-          color = 0xff0000; 
-          action = 'dumped'; 
-          emoji = '💀'; 
+          color = 0xff0000;
+          action = 'papered';
+          emoji = '🧻';
         } else {
-          color = 0xff0000; 
-          action = 'sold'; 
-          emoji = '🔴'; 
+          color = 0xff0000;
+          action = 'sold';
+          emoji = '🔴';
         }
         break;
-      case 'mint': color = 0x0099ff; action = 'minted'; emoji = '🔵'; break;
-      default: color = 0x0099ff; action = 'transacted'; emoji = '🔵';
+      }
+      case 'mint':
+        color = 0x0099ff;
+        action = 'minted';
+        emoji = '🔵';
+        break;
+      default:
+        color = 0x0099ff;
+        action = 'transacted';
+        emoji = '🔵';
     }
 
     // Convert hex token ID to decimal number
