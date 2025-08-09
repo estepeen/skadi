@@ -49,7 +49,14 @@ class DiscordNotifier {
       }
 
       const embed = await this.createEmbed(transactionData, nftTracker);
-      await channel.send({ embeds: [embed] });
+
+      // Optional role mention for bulk NFT sweeps (>=3 items) - only for purchase
+      let content = undefined;
+      if (transactionData.type === 'purchase' && transactionData.isBulk === true && Number(transactionData.quantity) >= 3 && config.discord.nftsRoleId) {
+        content = `<@&${config.discord.nftsRoleId}>`;
+      }
+
+      await channel.send({ content, embeds: [embed] });
       
       console.log(`📨 Discord notification sent for ${transactionData.type}`);
     } catch (error) {
@@ -61,7 +68,8 @@ class DiscordNotifier {
     const {
       type, walletName, walletAddress, fromAddress, toAddress, tokenName, tokenId, contractAddress,
       transactionHash, chainName, timestamp, price, priceUSD, totalPrice, totalPriceUSD,
-      quantity = 1, imageUrl, nftName, nativeSymbol, floorPrice, buyPrice, buyPriceUSD, isSweep = false, buyTimestamp
+      quantity = 1, imageUrl, nftName, nativeSymbol, floorPrice, buyPrice, buyPriceUSD, isSweep = false, buyTimestamp,
+      isBulk = false
     } = transactionData;
 
     // Get collection info for better display
@@ -89,7 +97,7 @@ class DiscordNotifier {
     let color, action, emoji;
     switch (type) {
       case 'purchase': 
-        if (quantity >= 4) {
+        if (isBulk && quantity >= 3) {
           color = 0x00ff00; 
           action = 'swept'; 
           emoji = '🧹'; 
@@ -117,7 +125,13 @@ class DiscordNotifier {
           emoji = '🔴'; 
         }
         break;
-      case 'mint': color = 0x0099ff; action = 'minted'; emoji = '🔵'; break;
+      case 'mint': 
+        if (isBulk && quantity >= 3) {
+          color = 0x0099ff; action = 'minted'; emoji = '🧹';
+        } else {
+          color = 0x0099ff; action = 'minted'; emoji = '🔵';
+        }
+        break;
       default: color = 0x0099ff; action = 'transacted'; emoji = '🔵';
     }
 
@@ -126,7 +140,9 @@ class DiscordNotifier {
     
     // Create display name with collection name and token ID
     let nftDisplayName;
-    if (nftName && nftName !== 'Unknown') {
+    if (isBulk && tokenName && tokenName !== 'Unknown') {
+      nftDisplayName = tokenName;
+    } else if (nftName && nftName !== 'Unknown') {
       nftDisplayName = nftName;
     } else if (collectionName && collectionName !== 'Unknown') {
       nftDisplayName = `${collectionName} #${tokenIdNumber}`;
@@ -134,7 +150,28 @@ class DiscordNotifier {
       nftDisplayName = `NFT #${tokenIdNumber}`;
     }
     
-    const displayTitle = `${emoji} ${walletName} ${action} ${nftDisplayName}`;
+    let displayTitle;
+    if (isBulk && type === 'purchase') {
+      // Title rules for bulk BUY:
+      // 2+  → one broom, 5+ → two brooms, 10+ → three brooms
+      let broomsCount = 0;
+      if (quantity >= 10) broomsCount = 3; else if (quantity >= 5) broomsCount = 2; else if (quantity >= 2) broomsCount = 1;
+      const brooms = broomsCount > 0 ? ` ${'🧹'.repeat(broomsCount)}` : '';
+      displayTitle = `🟢 ${walletName} swept ${collectionName || tokenName || 'collection'}${brooms}`;
+    } else if (isBulk && type === 'mint') {
+      // Title rules for bulk MINT:
+      // 2–4 → 👀, 5–9 → 🚀, 10+ → 🔥 (blue dot at start)
+      let suffix = '';
+      if (quantity >= 10) suffix = '🔥';
+      else if (quantity >= 5) suffix = '🚀';
+      else if (quantity >= 2) suffix = '👀';
+      const suffixText = suffix ? ` ${suffix}` : '';
+      displayTitle = `🔵 ${walletName} minted ${collectionName || tokenName || 'collection'}${suffixText}`;
+    } else if (isBulk) {
+      displayTitle = `${emoji} ${walletName} ${type === 'purchase' ? 'swept' : 'minted'} ${collectionName || tokenName || 'collection'}`;
+    } else {
+      displayTitle = `${emoji} ${walletName} ${action} ${nftDisplayName}`;
+    }
 
     const embed = new EmbedBuilder()
       .setColor(color)
@@ -146,15 +183,31 @@ class DiscordNotifier {
     const walletOpenSeaUrl = `https://opensea.io/${walletAddress}`;
     const walletLink = `[**${walletName}**](${walletOpenSeaUrl})`;
     
-    // Create NFT link
-    const nftOpenSeaUrl = `https://opensea.io/assets/${chainName.toLowerCase() === 'ethereum' ? 'ethereum' : chainName.toLowerCase()}/${contractAddress}/${tokenId}`;
+    // Create NFT link (id-only text for single purchase to ensure clarity)
+    const tokenIdForUrl = tokenIdNumber !== 'Unknown' ? tokenIdNumber : tokenId;
+    const nftOpenSeaUrl = `https://opensea.io/assets/${chainName.toLowerCase() === 'ethereum' ? 'ethereum' : chainName.toLowerCase()}/${contractAddress}/${tokenIdForUrl}`;
+    const nftIdOnlyLink = `[${tokenIdNumber}](${nftOpenSeaUrl})`;
     const nftLink = `[${nftDisplayName}](${nftOpenSeaUrl})`;
     
-    // Create collection link
-    const collectionOpenSeaUrl = `https://opensea.io/collection/${tokenName}`;
+    // Create collection link using slug if available or fallback to slugified tokenName
+    const collectionSlugFromInfo = collectionInfo?.slug;
+    const fallbackSlug = (tokenName || '').toString().trim().toLowerCase().replace(/\s+/g, '-');
+    const collectionSlug = collectionSlugFromInfo || fallbackSlug || contractAddress;
+    const collectionOpenSeaUrl = `https://opensea.io/collection/${collectionSlug}`;
     const collectionLink = `[${collectionName}](${collectionOpenSeaUrl})`;
     
-    let descriptionText = `${walletLink} just ${action} ${nftLink} (${collectionLink} collection).`;
+    let descriptionText;
+    if (isBulk) {
+      const verb = type === 'purchase' ? 'bought' : 'minted';
+      descriptionText = `${walletLink} just ${verb} ${quantity} NFTs from ${collectionLink} collection.`;
+    } else {
+      if (type === 'purchase') {
+        // Single purchase: show token ID as link and collection link
+        descriptionText = `${walletLink} just bought ${nftIdOnlyLink} from ${collectionLink} collection.`;
+      } else {
+        descriptionText = `${walletLink} just ${action} ${nftLink} (${collectionLink} collection).`;
+      }
+    }
     
     // Add floor price information
     if (floorPriceValue && floorPriceValue > 0) {
@@ -184,98 +237,96 @@ class DiscordNotifier {
     
     embed.setDescription(descriptionText);
 
-    // Row 1: Buy Price + Sell Price + PnL (3 per row) - only for purchase/sale
-    if (type !== 'mint') {
-      // Buy Price (show for purchases, show buy price for sales if available)
+    // Row 1: Price info
+    // Purchases and mints: show Buy Price (or Avg Buy Price for bulk)
+    if (type === 'purchase' || type === 'mint') {
       let buyPriceDisplay = '-';
-      if (type === 'purchase' && price && price > 0) {
+      if (type === 'purchase' && price && price > 0 && !isBulk) {
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
         const formattedPrice = this.formatPrice(price);
         buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
-      } else if (type === 'sale' && buyPrice && buyPrice > 0) {
+      } else if (isBulk && totalPrice && quantity) {
+        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const avg = totalPrice / quantity;
+        const formattedPrice = this.formatPrice(avg);
+        buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
+      }
+      const buyTitle = (isBulk ? '💰 Avg Buy Price' : '💰 Buy Price');
+      embed.addFields({ name: buyTitle, value: buyPriceDisplay, inline: true });
+    }
+
+    // Sales: show Buy Price, Sell Price and PnL
+    if (type === 'sale') {
+      // Buy Price (from stored purchase data)
+      let buyPriceDisplay = '-';
+      if (buyPrice && buyPrice > 0) {
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
         const formattedPrice = this.formatPrice(buyPrice);
         buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
       }
-      
       embed.addFields({ name: '💰 Buy Price', value: buyPriceDisplay, inline: true });
 
-      // Sell Price (only for sales)
-      if (type === 'sale') {
-        let sellPriceDisplay = '-';
-        if (price && price > 0) {
-          const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
-          const formattedPrice = this.formatPrice(price);
-          sellPriceDisplay = `${formattedPrice} ${displaySymbol}`;
-        }
-        
-        embed.addFields({ name: '💸 Sell Price', value: sellPriceDisplay, inline: true });
-
-        // Calculate PnL for sales
-        let pnlValue = '-';
-        let pnlEmoji = '🫥'; // Dotted line face for no PnL
-        
-        if (buyPrice && price && buyPrice > 0 && price > 0) {
-          const pnl = price - buyPrice;
-          const pnlUSD = priceUSD - buyPriceUSD;
-          const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
-          
-          // Format PnL with proper rounding - use < symbol for small amounts
-          let formattedPnl;
-          let formattedPnlUSD;
-          let percentageText;
-          
-          if (Math.abs(pnl) < 0.001) {
-            formattedPnl = '<0.001';
-          } else if (Math.abs(pnl) >= 1) {
-            formattedPnl = Math.round(pnl * 100) / 100;
-          } else {
-            formattedPnl = pnl.toFixed(4);
-          }
-          
-          // Format USD PnL - handle NaN and small values properly
-          if (isNaN(pnlUSD) || !isFinite(pnlUSD)) {
-            formattedPnlUSD = '<$1';
-          } else if (Math.abs(pnlUSD) < 1) {
-            formattedPnlUSD = '<$1';
-          } else {
-            formattedPnlUSD = Math.round(pnlUSD * 100) / 100;
-          }
-          
-          // Format percentage - handle NaN and small values
-          const percentage = (pnl / buyPrice) * 100;
-          if (isNaN(percentage) || !isFinite(percentage)) {
-            percentageText = '<1%';
-          } else if (Math.abs(percentage) < 1) {
-            percentageText = '<1%';
-          } else {
-            percentageText = percentage > 0 ? `+${percentage.toFixed(1)}%` : `${percentage.toFixed(1)}%`;
-          }
-          
-          if (pnl > 0) {
-            pnlValue = `+${formattedPnl} ${displaySymbol}\n+$${formattedPnlUSD}\n${percentageText}`;
-            pnlEmoji = '🤑'; // Money eyes for profit
-          } else if (pnl < 0) {
-            // Handle the case where formattedPnlUSD is '<$1'
-            const usdDisplay = formattedPnlUSD === '<$1' ? '$1' : `$${Math.abs(parseFloat(formattedPnlUSD))}`;
-            pnlValue = `-${formattedPnl} ${displaySymbol}\n-${usdDisplay}\n${percentageText}`;
-            pnlEmoji = '😢'; // Crying face for loss
-          } else {
-            pnlValue = `0.0000 ${displaySymbol}\n$0.00\n0.0%`;
-            pnlEmoji = '🫥'; // Dotted line face for no change
-          }
-        } else {
-          // No PnL calculation possible - show dash
-          pnlValue = '-';
-          pnlEmoji = '🫥'; // Dotted line face
-        }
-        
-        // Add PnL
-        embed.addFields({ name: `${pnlEmoji} PnL`, value: pnlValue, inline: true });
+      // Sell Price
+      let sellPriceDisplay = '-';
+      if (price && price > 0) {
+        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const formattedPrice = this.formatPrice(price);
+        sellPriceDisplay = `${formattedPrice} ${displaySymbol}`;
       }
+      embed.addFields({ name: '💸 Sell Price', value: sellPriceDisplay, inline: true });
+
+      // PnL
+      let pnlValue = '-';
+      let pnlEmoji = '🫥';
+      if (buyPrice && price && buyPrice > 0 && price > 0) {
+        const pnl = price - buyPrice;
+        const pnlUSD = priceUSD - buyPriceUSD;
+        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+
+        let formattedPnl;
+        if (Math.abs(pnl) < 0.001) {
+          formattedPnl = '<0.001';
+        } else if (Math.abs(pnl) >= 1) {
+          formattedPnl = Math.round(pnl * 100) / 100;
+        } else {
+          formattedPnl = pnl.toFixed(4);
+        }
+
+        let formattedPnlUSD;
+        if (isNaN(pnlUSD) || !isFinite(pnlUSD)) {
+          formattedPnlUSD = '<$1';
+        } else if (Math.abs(pnlUSD) < 1) {
+          formattedPnlUSD = '<$1';
+        } else {
+          formattedPnlUSD = Math.round(pnlUSD * 100) / 100;
+        }
+
+        const percentage = (pnl / buyPrice) * 100;
+        let percentageText;
+        if (isNaN(percentage) || !isFinite(percentage)) {
+          percentageText = '<1%';
+        } else if (Math.abs(percentage) < 1) {
+          percentageText = '<1%';
+        } else {
+          percentageText = percentage > 0 ? `+${percentage.toFixed(1)}%` : `${percentage.toFixed(1)}%`;
+        }
+
+        if (pnl > 0) {
+          pnlValue = `+${formattedPnl} ${displaySymbol}\n+$${formattedPnlUSD}\n${percentageText}`;
+          pnlEmoji = '🤑';
+        } else if (pnl < 0) {
+          const usdDisplay = formattedPnlUSD === '<$1' ? '$1' : `$${Math.abs(parseFloat(formattedPnlUSD))}`;
+          pnlValue = `-${formattedPnl} ${displaySymbol}\n-${usdDisplay}\n${percentageText}`;
+          pnlEmoji = '😢';
+        } else {
+          pnlValue = `0.0000 ${displaySymbol}\n$0.00\n0.0%`;
+          pnlEmoji = '🫥';
+        }
+      }
+      embed.addFields({ name: `${pnlEmoji} PnL`, value: pnlValue, inline: true });
     }
 
-    // Row 2: HODL time + Floor price + Chain (3 per row) - only for purchase/sale
+    // Row 2: HODL time + Floor price (only for purchase/sale)
     if (type !== 'mint') {
       // HODL time only for sales
       if (type === 'sale') {
@@ -315,15 +366,19 @@ class DiscordNotifier {
       }
       
       embed.addFields({ name: '🎯 Floor price', value: floorPriceDisplay, inline: true });
-
-      // Chain information
-      const chainEmoji = this.getChainEmoji(chainName);
-      embed.addFields({ name: `${chainEmoji} Chain`, value: chainName, inline: true });
     }
 
+    // Chain information (always show, including mint)
+    const chainEmoji = this.getChainEmoji(chainName);
+    embed.addFields({ name: `${chainEmoji} Chain`, value: chainName, inline: true });
+
     // Row 4: NFT Image (if available)
-    if (imageUrl) {
-      embed.setImage(imageUrl);
+    let displayImageUrl = imageUrl;
+    if (!displayImageUrl && collectionInfo) {
+      displayImageUrl = collectionInfo.image_url || collectionInfo.banner_image_url || null;
+    }
+    if (displayImageUrl) {
+      embed.setImage(displayImageUrl);
     }
 
     // Row 6: Links - Twitter | Discord | OpenSea.io | Explorer
