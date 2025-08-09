@@ -1699,7 +1699,30 @@ class NFTTracker {
         console.log(`   🔍 Looking for purchase data with key: ${purchaseKey}`);
         console.log(`   📊 Available purchase keys:`, Array.from(this.nftPurchases.keys()));
         
-        const purchaseData = purchaseKey ? this.nftPurchases.get(purchaseKey) : undefined;
+        let purchaseData = purchaseKey ? this.nftPurchases.get(purchaseKey) : undefined;
+        // Recovery: if we have a record but missing price, try to recover from OpenSea events
+        if (purchaseData && (!Number.isFinite(purchaseData.price) || purchaseData.price <= 0)) {
+          console.log('   🛠️ Purchase record found but price is 0; attempting recovery...');
+          try {
+            const recovered = await this.recoverPurchaseData(nft.contract, nft.identifier, walletInfo.address, chainName);
+            if (recovered && Number.isFinite(recovered.price) && recovered.price > 0) {
+              purchaseData.price = recovered.price;
+              purchaseData.priceUSD = recovered.priceUSD || (recovered.price * (await this.getNativeTokenPriceUSD(chainName)));
+              if (!purchaseData.timestamp && recovered.timestamp) {
+                purchaseData.timestamp = recovered.timestamp;
+              }
+              // Persist update under both keys
+              const originalKey = `${nft.contract}_${nft.identifier}`;
+              const stableKey = this.buildStablePurchaseKey(nft.contract, nft.identifier);
+              this.nftPurchases.set(originalKey, purchaseData);
+              if (stableKey) this.nftPurchases.set(stableKey, purchaseData);
+              this.savePurchaseData();
+              console.log('   ✅ Recovered missing buy price from events');
+            }
+          } catch (e) {
+            console.log(`   ⚠️ Recovery failed: ${e.message}`);
+          }
+        }
         if (purchaseData) {
           transactionData.buyPrice = purchaseData.price;
           transactionData.buyPriceUSD = purchaseData.priceUSD;
@@ -1751,19 +1774,20 @@ class NFTTracker {
 
       // Pro purchase/mint: uložit pro PnL
       if ((isPurchase || isMint) && this.nftPurchases) {
-        // Store under stable key format, but preserve existing scheme for compatibility
+        // Store under both original and stable keys for compatibility across id formats
+        const originalKey = `${nft.contract}_${nft.identifier}`;
         const stableKey = this.buildStablePurchaseKey(nft.contract, nft.identifier);
-        this.nftPurchases.set(purchaseKey, {
+        const record = {
           price: price,
           priceUSD: priceUSD,
           timestamp: typeof event.event_timestamp === 'number'
             ? event.event_timestamp * 1000 // Store as milliseconds for consistency
             : new Date(event.event_timestamp).getTime(),
           walletAddress: walletInfo.address
-        });
-        // Also store a stable key if different (avoids future mismatches when IDs vary by hex/decimal)
-        if (stableKey && stableKey !== purchaseKey) {
-          this.nftPurchases.set(stableKey, this.nftPurchases.get(purchaseKey));
+        };
+        this.nftPurchases.set(originalKey, record);
+        if (stableKey && stableKey !== originalKey) {
+          this.nftPurchases.set(stableKey, record);
         }
         console.log(`   💾 Stored purchase data for future PnL calculation`);
         
@@ -2145,6 +2169,46 @@ class NFTTracker {
       return null;
     } catch (error) {
       console.error('Error estimating floor price:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Recover missing purchase record fields (e.g., price) by querying recent OpenSea sale events
+   * where the tracked wallet was the buyer of the given contract/tokenId.
+   */
+  async recoverPurchaseData(contractAddress, tokenId, walletAddress, chainName) {
+    try {
+      const apiKey = this.config.opensea.apiKey;
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
+      };
+      const chain = chainMap[chainName] || 'ethereum';
+      const url = `https://api.opensea.io/api/v2/events/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}?event_type=sale&limit=10`;
+      const res = await fetch(url, { headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const events = Array.isArray(data?.asset_events) ? data.asset_events : [];
+      // Find the most recent event where our wallet was buyer
+      const mine = events.find(e => typeof e?.buyer === 'string' && e.buyer.toLowerCase() === (walletAddress || '').toLowerCase());
+      if (!mine) return null;
+      let price = 0;
+      if (mine.payment?.quantity) {
+        price = parseFloat(mine.payment.quantity) / Math.pow(10, mine.payment.decimals || 18);
+      }
+      if (!Number.isFinite(price) || price <= 0) return null;
+      const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
+      const priceUSD = price * nativePriceUSD;
+      const ts = typeof mine.event_timestamp === 'number' ? mine.event_timestamp * 1000 : new Date(mine.event_timestamp || Date.now()).getTime();
+      return { price, priceUSD, timestamp: ts };
+    } catch (e) {
       return null;
     }
   }
