@@ -151,13 +151,29 @@ class DiscordNotifier {
     }
     
     let displayTitle;
-    if (isBulk && type === 'purchase') {
-      // Title rules for bulk BUY:
-      // 2+  → one broom, 5+ → two brooms, 10+ → three brooms
-      let broomsCount = 0;
-      if (quantity >= 10) broomsCount = 3; else if (quantity >= 5) broomsCount = 2; else if (quantity >= 2) broomsCount = 1;
-      const brooms = broomsCount > 0 ? ` ${'🧹'.repeat(broomsCount)}` : '';
-      displayTitle = `🟢 ${walletName} swept ${collectionName || tokenName || 'collection'}${brooms}`;
+    if (type === 'sale' && isBulk) {
+      // Bulk SELL custom title: "🔴 {User} dumped {quantity}x {Collection} NFTs 💀"
+      const skull = quantity >= 3 ? ' 💀' : '';
+      const qtyText = `${quantity}x`;
+      displayTitle = `🔴 ${walletName} dumped ${qtyText} ${collectionName || tokenName || 'NFT'} NFTs${skull}`;
+    } else if (type === 'sale') {
+      // Always start with red dot, and move special emoji to the end
+      const suffix = (emoji && emoji !== '🔴') ? ` ${emoji}` : '';
+      displayTitle = `🔴 ${walletName} ${action} ${nftDisplayName}${suffix}`;
+    } else if (isBulk && type === 'purchase') {
+      // Title rules for bulk BUY (updated):
+      // 2  → "bought 2x {Collection} NFT 👏"
+      // 3–9 → "swept {Collection} 🧹🧹"
+      // 10+ → "swept {Collection} 🔥🔥🔥"
+      if (quantity === 2) {
+        displayTitle = `🟢 ${walletName} bought 2x ${collectionName || tokenName || 'collection'} NFT 👏`;
+      } else if (quantity >= 10) {
+        displayTitle = `🟢 ${walletName} swept ${collectionName || tokenName || 'collection'} 🔥🔥🔥`;
+      } else if (quantity >= 3) {
+        displayTitle = `🟢 ${walletName} swept ${collectionName || tokenName || 'collection'} 🧹🧹`;
+      } else {
+        displayTitle = `🟢 ${walletName} bought ${collectionName || tokenName || 'collection'}`;
+      }
     } else if (isBulk && type === 'mint') {
       // Title rules for bulk MINT:
       // 2–4 → 👀, 5–9 → 🚀, 10+ → 🔥 (blue dot at start)
@@ -198,7 +214,7 @@ class DiscordNotifier {
     
     let descriptionText;
     if (isBulk) {
-      const verb = type === 'purchase' ? 'bought' : 'minted';
+      const verb = type === 'purchase' ? 'bought' : (type === 'mint' ? 'minted' : 'sold');
       descriptionText = `${walletLink} just ${verb} ${quantity} NFTs from ${collectionLink} collection.`;
     } else {
       if (type === 'purchase') {
@@ -283,45 +299,39 @@ class DiscordNotifier {
         const pnlUSD = priceUSD - buyPriceUSD;
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
 
-        let formattedPnl;
-        if (Math.abs(pnl) < 0.001) {
-          formattedPnl = '<0.001';
-        } else if (Math.abs(pnl) >= 1) {
-          formattedPnl = Math.round(pnl * 100) / 100;
-        } else {
-          formattedPnl = pnl.toFixed(4);
-        }
-
-        let formattedPnlUSD;
-        if (isNaN(pnlUSD) || !isFinite(pnlUSD)) {
-          formattedPnlUSD = '<$1';
-        } else if (Math.abs(pnlUSD) < 1) {
-          formattedPnlUSD = '<$1';
-        } else {
-          formattedPnlUSD = Math.round(pnlUSD * 100) / 100;
-        }
-
+        const sign = pnl > 0 ? '+' : pnl < 0 ? '-' : '';
+        const absPnl = Math.abs(pnl);
+        const absUsd = Math.abs(pnlUSD);
         const percentage = (pnl / buyPrice) * 100;
-        let percentageText;
-        if (isNaN(percentage) || !isFinite(percentage)) {
-          percentageText = '<1%';
-        } else if (Math.abs(percentage) < 1) {
-          percentageText = '<1%';
+
+        // ETH line: threshold < 0.0001, otherwise 4 decimals (<1) or 2 decimals (>=1)
+        let ethContent;
+        if (absPnl < 0.0001) {
+          ethContent = `<0.0001 ${displaySymbol}`;
+        } else if (absPnl >= 1) {
+          ethContent = `${Math.round(absPnl * 100) / 100} ${displaySymbol}`;
         } else {
-          percentageText = percentage > 0 ? `+${percentage.toFixed(1)}%` : `${percentage.toFixed(1)}%`;
+          ethContent = `${absPnl.toFixed(4)} ${displaySymbol}`;
         }
 
-        if (pnl > 0) {
-          pnlValue = `+${formattedPnl} ${displaySymbol}\n+$${formattedPnlUSD}\n${percentageText}`;
-          pnlEmoji = '🤑';
-        } else if (pnl < 0) {
-          const usdDisplay = formattedPnlUSD === '<$1' ? '$1' : `$${Math.abs(parseFloat(formattedPnlUSD))}`;
-          pnlValue = `-${formattedPnl} ${displaySymbol}\n-${usdDisplay}\n${percentageText}`;
-          pnlEmoji = '😢';
+        // USD line: threshold < $1
+        let usdContent;
+        if (isNaN(absUsd) || !isFinite(absUsd) || absUsd < 1) {
+          usdContent = '<$1';
         } else {
-          pnlValue = `0.0000 ${displaySymbol}\n$0.00\n0.0%`;
-          pnlEmoji = '🫥';
+          usdContent = `$${Math.round(absUsd * 100) / 100}`;
         }
+
+        // Percentage line: threshold < 1%
+        let percContent;
+        if (isNaN(percentage) || !isFinite(percentage) || Math.abs(percentage) < 1) {
+          percContent = '<1%';
+        } else {
+          percContent = `${Math.abs(percentage).toFixed(1)}%`;
+        }
+
+        pnlValue = `${sign}${ethContent}\n${sign}${usdContent}\n${sign}${percContent}`;
+        pnlEmoji = pnl > 0 ? '🤑' : (pnl < 0 ? '😢' : '🫥');
       }
       embed.addFields({ name: `${pnlEmoji} PnL`, value: pnlValue, inline: true });
     }
