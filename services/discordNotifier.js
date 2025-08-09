@@ -135,8 +135,22 @@ class DiscordNotifier {
       default: color = 0x0099ff; action = 'transacted'; emoji = '🔵';
     }
 
-    // Convert hex token ID to decimal number
-    const tokenIdNumber = tokenId ? parseInt(tokenId, 16) : 'Unknown';
+    // Derive token ID for display/URL robustly
+    let tokenIdNumber = 'Unknown';
+    if (typeof tokenId === 'string') {
+      if (tokenId.startsWith('0x')) {
+        try { tokenIdNumber = String(parseInt(tokenId, 16)); } catch { tokenIdNumber = tokenId; }
+      } else {
+        tokenIdNumber = tokenId;
+      }
+    } else if (typeof tokenId === 'number') {
+      tokenIdNumber = String(tokenId);
+    }
+    // Prefer token id parsed from nftName pattern "... #1234"
+    if (typeof nftName === 'string') {
+      const m = nftName.match(/#(\d+)/);
+      if (m && m[1]) tokenIdNumber = m[1];
+    }
     
     // Create display name with collection name and token ID
     let nftDisplayName;
@@ -199,8 +213,8 @@ class DiscordNotifier {
     const walletOpenSeaUrl = `https://opensea.io/${walletAddress}`;
     const walletLink = `[**${walletName}**](${walletOpenSeaUrl})`;
     
-    // Create NFT link (id-only text for single purchase to ensure clarity)
-    const tokenIdForUrl = tokenIdNumber !== 'Unknown' ? tokenIdNumber : tokenId;
+    // Create NFT link; use best-effort numeric tokenId
+    const tokenIdForUrl = tokenIdNumber !== 'Unknown' ? tokenIdNumber : (tokenId || '0');
     const nftOpenSeaUrl = `https://opensea.io/assets/${chainName.toLowerCase() === 'ethereum' ? 'ethereum' : chainName.toLowerCase()}/${contractAddress}/${tokenIdForUrl}`;
     const nftIdOnlyLink = `[${tokenIdNumber}](${nftOpenSeaUrl})`;
     const nftLink = `[${nftDisplayName}](${nftOpenSeaUrl})`;
@@ -218,8 +232,8 @@ class DiscordNotifier {
       descriptionText = `${walletLink} just ${verb} ${quantity} NFTs from ${collectionLink} collection.`;
     } else {
       if (type === 'purchase') {
-        // Single purchase: show token ID as link and collection link
-        descriptionText = `${walletLink} just bought ${nftIdOnlyLink} from ${collectionLink} collection.`;
+        // Single purchase: show full NFT display name (with #ID) as link and collection link
+        descriptionText = `${walletLink} just bought ${nftLink} from ${collectionLink} collection.`;
       } else {
         descriptionText = `${walletLink} just ${action} ${nftLink} (${collectionLink} collection).`;
       }
