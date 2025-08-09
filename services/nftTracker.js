@@ -488,31 +488,90 @@ class NFTTracker {
       }
 
       const chainIds = {
-        'ethereum': 'ethereum',
-        'base': 'ethereum', // Base uses ETH
-        'berachain': 'berachain',
-        'abstract': 'abstract',
-        'polygon': 'matic-network',
-        'arbitrum': 'ethereum', // Arbitrum uses ETH
-        'optimism': 'ethereum', // Optimism uses ETH
-        'avalanche': 'avalanche-2',
-        'bsc': 'binancecoin'
+        ethereum: 'ethereum',
+        base: 'ethereum', // Base uses ETH
+        berachain: 'berachain',
+        abstract: 'abstract',
+        polygon: 'matic-network',
+        arbitrum: 'ethereum', // Arbitrum uses ETH
+        optimism: 'ethereum', // Optimism uses ETH
+        avalanche: 'avalanche-2',
+        bsc: 'binancecoin'
       };
-      
-      const coinId = chainIds[chainName.toLowerCase()] || 'ethereum';
-      
-      // For chains that use ETH, use ETH price
-      let priceUsd = 2000;
-      if (coinId === 'ethereum') {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
-        const data = await response.json();
-        priceUsd = Number(data?.ethereum?.usd) || 2000;
-      } else {
-        const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
-        const data = await response.json();
-        priceUsd = Number(data?.[coinId]?.usd) || 2000;
+
+      const coinId = chainIds[cacheKey] || 'ethereum';
+
+      // Helper: attempt a series of providers, return first good numeric price
+      const tryProviders = [
+        // CoinGecko simple/price
+        async () => {
+          const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`;
+          const res = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!res.ok) throw new Error(`coingecko simple status ${res.status}`);
+          const data = await res.json();
+          const value = coinId === 'ethereum' ? data?.ethereum?.usd : data?.[coinId]?.usd;
+          const n = Number(value);
+          if (!Number.isFinite(n) || n <= 0) throw new Error('coingecko simple missing usd');
+          return n;
+        },
+        // CoinGecko markets (alternative schema)
+        async () => {
+          const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coinId}`;
+          const res = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!res.ok) throw new Error(`coingecko markets status ${res.status}`);
+          const data = await res.json();
+          const n = Number(Array.isArray(data) && data[0] && data[0].current_price);
+          if (!Number.isFinite(n) || n <= 0) throw new Error('coingecko markets missing price');
+          return n;
+        },
+        // Coinbase spot price (supports most majors). Map to ticker symbol
+        async () => {
+          const symbolMap = {
+            'ethereum': 'ETH',
+            'matic-network': 'MATIC',
+            'avalanche-2': 'AVAX',
+            'binancecoin': 'BNB'
+          };
+          const symbol = symbolMap[coinId] || 'ETH';
+          const url = `https://api.coinbase.com/v2/prices/${symbol}-USD/spot`;
+          const res = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!res.ok) throw new Error(`coinbase status ${res.status}`);
+          const data = await res.json();
+          const n = Number(data?.data?.amount);
+          if (!Number.isFinite(n) || n <= 0) throw new Error('coinbase missing amount');
+          return n;
+        },
+        // CoinCap as last resort for ETH only
+        async () => {
+          if (coinId !== 'ethereum') throw new Error('coincap only for ethereum');
+          const url = 'https://api.coincap.io/v2/assets/ethereum';
+          const res = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!res.ok) throw new Error(`coincap status ${res.status}`);
+          const data = await res.json();
+          const n = Number(data?.data?.priceUsd);
+          if (!Number.isFinite(n) || n <= 0) throw new Error('coincap missing price');
+          return n;
+        }
+      ];
+
+      let priceUsd = 0;
+      let lastError = null;
+      for (const provider of tryProviders) {
+        try {
+          priceUsd = await provider();
+          break;
+        } catch (e) {
+          lastError = e;
+          continue;
+        }
       }
-      // Store in cache
+
+      // Fallback hardcoded if all providers failed
+      if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+        priceUsd = 2000;
+      }
+
+      // Store in cache and return
       this.nativeUsdCache.set(cacheKey, { price: priceUsd, ts: Date.now() });
       return priceUsd;
     } catch (error) {
