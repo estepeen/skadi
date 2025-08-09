@@ -13,6 +13,8 @@ class NFTTracker {
     this.trackedWallets = new Map(); // address -> { name, lastChecked }
     this.lastTransactions = new Map(); // address -> last transaction hash
     this.discordNotifier = new DiscordNotifier();
+    // Deduplication set for OpenSea transaction hashes to avoid duplicate notifications
+    this.processedOpenSeaTxHashes = new Set();
     // Track NFT purchases for PnL calculation
     this.nftPurchases = new Map(); // key: contractAddress_tokenId, value: {price, priceUSD, timestamp}
     this.purchasesFile = path.join(__dirname, '../data/purchases.json');
@@ -59,8 +61,9 @@ class NFTTracker {
       this.trackedWallets.set(wallet.address, {
         address: wallet.address,
         name: wallet.name,
-        lastChecked: Date.now(), // Nastavíme na aktuální čas - nebudeme zpracovávat staré eventy
-        lastEventTimestamp: Date.now() / 1000 // Timestamp posledního zpracovaného eventu (v sekundách)
+        lastChecked: Date.now(),
+        // Start with a small backoff window to avoid missing fresh events due to clock skews
+        lastEventTimestamp: Math.floor(Date.now() / 1000) - 300 // 5 min backoff
       });
       console.log(`Tracking wallet: ${wallet.name} (${wallet.address})`);
     }
@@ -364,7 +367,7 @@ class NFTTracker {
         const tx = data.result;
         const priceInWei = tx.value;
         // Convert hex string to BigInt, then to ETH
-        const priceInEth = priceInWei ? parseFloat(BigInt(priceInWei).toString()) / Math.pow(10, 18) : 0;
+        const priceInEth = priceInWei ? Number(BigInt(priceInWei)) / Math.pow(10, 18) : 0;
         
         // Get native token price in USD
         const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
@@ -1295,10 +1298,79 @@ class NFTTracker {
           console.log(`📅 Found ${newEvents.length} new events to process (filtered from ${sortedEvents.length} total)`);
           
           if (newEvents.length > 0) {
-            console.log(`📅 Processing ${newEvents.length} new events in chronological order...`);
-            
-            for (const event of newEvents) {
-              // Logujeme typ a adresy
+          console.log(`📅 Processing ${newEvents.length} new events in chronological order...`);
+
+          // Group events by transaction hash to detect sweeps across multiple per-item events
+          const groupsByTx = new Map();
+          for (const ev of newEvents) {
+            const key = typeof ev.transaction === 'string' && ev.transaction.length > 0
+              ? ev.transaction
+              : `${ev.event_type}-${ev.nft?.contract}-${ev.nft?.identifier}-${ev.event_timestamp}`;
+            if (!groupsByTx.has(key)) groupsByTx.set(key, []);
+            groupsByTx.get(key).push(ev);
+          }
+
+          for (const [txHash, group] of groupsByTx.entries()) {
+            if (group.length >= 2) {
+              // Build synthetic bulk event from the group
+              const base = group[0];
+              const isMintGroup = group.every(e => e.event_type === 'mint');
+
+              // Aggregate items and price
+              const nfts = group
+                .map(e => e.nft)
+                .filter(Boolean)
+                .map(n => ({
+                  contract: n.contract,
+                  identifier: n.identifier,
+                  name: n.name,
+                  image_url: n.image_url,
+                  collection: n.collection
+                }));
+
+              let totalQty = 0;
+              let totalPaid = 0;
+              let decimals = 18;
+              for (const e of group) {
+                const q = typeof e.quantity === 'number' ? e.quantity : 1;
+                totalQty += q;
+                if (e.payment && e.payment.quantity) {
+                  decimals = e.payment.decimals || decimals;
+                  const paid = parseFloat(e.payment.quantity) / Math.pow(10, e.payment.decimals || 18);
+                  totalPaid += paid;
+                }
+              }
+
+              const syntheticEvent = {
+                event_type: isMintGroup ? 'mint' : 'sale',
+                chain: base.chain,
+                quantity: totalQty,
+                nfts,
+                transaction: txHash,
+                buyer: base.buyer,
+                seller: base.seller,
+                payment: totalPaid > 0 ? { quantity: String(totalPaid * Math.pow(10, decimals)), decimals, symbol: base.payment?.symbol } : null,
+                event_timestamp: group.reduce((maxTs, e) => {
+                  const ts = typeof e.event_timestamp === 'number' ? e.event_timestamp : new Date(e.event_timestamp).getTime() / 1000;
+                  return Math.max(maxTs, ts);
+                }, 0)
+              };
+
+              console.log(`\n🔗 Grouped ${group.length} events into bulk tx ${txHash} (qty=${totalQty}, paid≈${totalPaid})`);
+              if (isMintGroup) {
+                await this.handleBulkMintEvent(syntheticEvent, walletInfo);
+              } else {
+                await this.handleBulkEvent(syntheticEvent, walletInfo);
+              }
+
+              // Update last processed timestamp from group
+              walletInfo.lastEventTimestamp = Math.max(
+                walletInfo.lastEventTimestamp,
+                syntheticEvent.event_timestamp
+              );
+            } else {
+              const event = group[0];
+              // Log single
               console.log(`\n--- Event ---`);
               console.log(`Type: ${event.event_type}`);
               console.log(`Seller: ${event.seller || event.from_address || 'Unknown'}`);
@@ -1306,14 +1378,13 @@ class NFTTracker {
               console.log(`NFT: ${event.nft?.name || 'Unknown'} (${event.nft?.contract || 'Unknown'}) #${event.nft?.identifier || 'Unknown'}`);
               console.log(`Collection: ${event.nft?.collection || 'Unknown'}`);
               console.log(`Timestamp: ${new Date(event.event_timestamp * 1000).toISOString()}`);
-              
-              // Zpracujeme nový event
+
               await this.processOpenSeaEvent(event, walletInfo);
-              
-              // Aktualizujeme timestamp posledního zpracovaného eventu
+
               const eventTimestamp = typeof event.event_timestamp === 'number' ? event.event_timestamp : new Date(event.event_timestamp).getTime() / 1000;
               walletInfo.lastEventTimestamp = Math.max(walletInfo.lastEventTimestamp, eventTimestamp);
             }
+          }
           } else {
             console.log(`✅ No new events to process for ${walletInfo.name}`);
           }
@@ -1332,6 +1403,7 @@ class NFTTracker {
       const eventType = event.event_type;
       const nft = event.nft;
       const payment = event.payment;
+      const txHashForDedup = event?.transaction;
 
       console.log(`🔍 Processing event: ${eventType} for ${walletInfo.name}`);
       console.log(`   NFT: ${nft?.name || 'Unknown'}`);
@@ -1388,6 +1460,27 @@ class NFTTracker {
         return;
       }
 
+      // Deduplicate by transaction hash to prevent multiple messages for the same sweep
+      if (typeof txHashForDedup === 'string' && txHashForDedup.length > 0) {
+        if (this.processedOpenSeaTxHashes.has(txHashForDedup)) {
+          console.log(`   ⚠️ Skipping already processed tx: ${txHashForDedup}`);
+          return;
+        }
+        this.processedOpenSeaTxHashes.add(txHashForDedup);
+      }
+
+      // Decide between single vs. bulk transaction handling
+      const isBulk = this.isBulkEvent(event);
+      console.log(`   Multiplicity check → isBulk=${isBulk}`);
+      // Bulk handling for PURCHASE and MINT sweeps
+      if (isBulk && isPurchase) {
+        await this.handleBulkEvent(event, walletInfo);
+        return;
+      } else if (isBulk && isMint) {
+        await this.handleBulkMintEvent(event, walletInfo);
+        return;
+      }
+
       // Get chain name from event
       const chainName = this.getChainFromOpenSeaChain(event.chain);
       console.log(`   Chain: ${chainName}`);
@@ -1417,6 +1510,17 @@ class NFTTracker {
         priceUSD = price * nativePriceUSD;
         nativeSymbol = payment.symbol || 'ETH';
         console.log(`   Payment Price: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
+      }
+
+      // Special handling for MINT: if still no price, get from chain tx value via *scan proxy
+      if (isMint && price === 0 && event.transaction) {
+        const txData = await this.getTransactionData(event.transaction, chainName);
+        if (txData) {
+          price = txData.price || 0;
+          priceUSD = txData.priceUSD || 0;
+          nativeSymbol = nativeSymbol || this.getNativeTokenSymbol(chainName);
+          console.log(`   Mint Price via chain tx: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
+        }
       }
 
       if (price === 0) {
@@ -1515,8 +1619,8 @@ class NFTTracker {
         }
       }
 
-      // Pro purchase: uložit pro PnL
-      if (isPurchase && this.nftPurchases) {
+      // Pro purchase/mint: uložit pro PnL
+      if ((isPurchase || isMint) && this.nftPurchases) {
         const purchaseKey = `${nft.contract}_${nft.identifier}`;
         this.nftPurchases.set(purchaseKey, {
           price: price,
@@ -1541,6 +1645,228 @@ class NFTTracker {
     } catch (error) {
       console.error('❌ Error processing OpenSea event:', error.message);
     }
+  }
+
+  /**
+   * Heuristics to determine if the OpenSea event represents a bulk transaction
+   * rather than a single-NFT transaction.
+   */
+  isBulkEvent(event) {
+    try {
+      // Quantity field explicitly states how many items were involved
+      const quantityNumeric = typeof event?.quantity === 'string'
+        ? parseInt(event.quantity, 10)
+        : (typeof event?.quantity === 'number' ? event.quantity : 1);
+      if (Number.isFinite(quantityNumeric) && quantityNumeric > 1) {
+        console.log(`   Bulk detection: quantity=${quantityNumeric} (>1)`);
+        return true;
+      }
+
+      // Some payloads may include arrays of NFTs/items
+      if (Array.isArray(event?.nfts) && event.nfts.length > 1) {
+        console.log(`   Bulk detection: nfts array length=${event.nfts.length}`);
+        return true;
+      }
+      if (Array.isArray(event?.items) && event.items.length > 1) {
+        console.log(`   Bulk detection: items array length=${event.items.length}`);
+        return true;
+      }
+      if (Array.isArray(event?.assets) && event.assets.length > 1) {
+        console.log(`   Bulk detection: assets array length=${event.assets.length}`);
+        return true;
+      }
+
+      // OpenSea bundle flags in some versions
+      if (event?.bundle_type === 'BUNDLE' || event?.is_bundle === true) {
+        console.log(`   Bulk detection: bundle flag present`);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.log(`   Bulk detection error: ${error.message}. Assuming single.`);
+      return false;
+    }
+  }
+
+  /**
+   * Placeholder for bulk transaction processing (Function B).
+   * For now, only logs the detection so we can implement behavior next.
+   */
+  async handleBulkEvent(event, walletInfo) {
+    console.log(`   📦 Bulk transaction detected for ${walletInfo.name}.`);
+    const txHash = event?.transaction || 'Unknown';
+    const qty = typeof event?.quantity === 'undefined' ? '-' : event.quantity;
+    console.log(`   📦 Tx: ${txHash}, Reported quantity: ${qty}`);
+
+    // Derive chain name
+    const chainName = this.getChainFromOpenSeaChain(event.chain);
+
+    // Aggregate totals
+    const quantity = Number(qty) || (Array.isArray(event?.nfts) ? event.nfts.length : 0) || 0;
+
+    // Try to compute total price
+    let totalPrice = 0;
+    let nativeSymbol = 'ETH';
+    if (event?.payment && event.payment.quantity) {
+      totalPrice = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
+      nativeSymbol = event.payment.symbol || 'ETH';
+    }
+
+    // Collection context (use the first NFT as representative)
+    const representative = Array.isArray(event?.nfts) && event.nfts.length > 0 ? event.nfts[0] : event.nft;
+    const contractAddress = representative?.contract;
+    const tokenName = representative?.collection || representative?.name || 'Unknown';
+
+    // Floor price (best-effort, per collection)
+    let floorPrice = '-';
+    if (contractAddress) {
+      floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
+    }
+
+    // Compute USD conversions for the lot (optional but useful for PnL)
+    let nativeUsd = 0;
+    try {
+      nativeUsd = await this.getNativeTokenPriceUSD(chainName);
+    } catch (e) {
+      nativeUsd = 0;
+    }
+    const totalPriceUSD = nativeUsd && totalPrice ? totalPrice * nativeUsd : undefined;
+    const unitPrice = quantity > 0 ? totalPrice / quantity : 0;
+    const unitPriceUSD = nativeUsd && unitPrice ? unitPrice * nativeUsd : 0;
+
+    // Persist per-item cost basis for PnL/HODL on later sales
+    if (Array.isArray(event?.nfts) && event.nfts.length > 0) {
+      for (const item of event.nfts) {
+        if (item?.contract && item?.identifier) {
+          const purchaseKey = `${item.contract}_${item.identifier}`;
+          this.nftPurchases.set(purchaseKey, {
+            price: unitPrice,
+            priceUSD: unitPriceUSD,
+            timestamp: typeof event.event_timestamp === 'number'
+              ? event.event_timestamp * 1000
+              : new Date(event.event_timestamp || Date.now()).getTime(),
+            walletAddress: walletInfo.address
+          });
+        }
+      }
+      // Save to disk after batch update
+      this.savePurchaseData();
+    }
+
+    const transactionData = {
+      type: 'purchase',
+      isBulk: true,
+      walletName: walletInfo.name,
+      walletAddress: walletInfo.address,
+      tokenName: tokenName,
+      tokenId: representative?.identifier, // not used in title for bulk
+      contractAddress: contractAddress,
+      transactionHash: txHash,
+      chainName: chainName,
+      timestamp: typeof event.event_timestamp === 'number'
+        ? new Date(event.event_timestamp * 1000)
+        : new Date(event.event_timestamp || Date.now()),
+      totalPrice: totalPrice,
+      totalPriceUSD: totalPriceUSD,
+      quantity: quantity,
+      imageUrl: representative?.image_url,
+      nftName: representative?.name,
+      nativeSymbol: nativeSymbol,
+      floorPrice: floorPrice
+    };
+
+    console.log(`   📦 Bulk Transaction Data ready: ${quantity} items, total ${totalPrice} ${nativeSymbol}`);
+    await this.sendDiscordNotification(transactionData, this);
+  }
+
+  /**
+   * Bulk MINT handling (no role ping). Store per-item cost basis and send one embed.
+   */
+  async handleBulkMintEvent(event, walletInfo) {
+    console.log(`   📦 Bulk MINT detected for ${walletInfo.name}.`);
+    const txHash = event?.transaction || 'Unknown';
+    const chainName = this.getChainFromOpenSeaChain(event.chain);
+
+    const reportedQty = typeof event?.quantity === 'undefined' ? '-' : event.quantity;
+    const quantity = Number(reportedQty) || (Array.isArray(event?.nfts) ? event.nfts.length : 0) || 0;
+
+    // Try to get total price from payment; mints may be 0 or have value paid to contract
+    let totalPrice = 0;
+    let nativeSymbol = this.getNativeTokenSymbol(chainName);
+    if (event?.payment && event.payment.quantity) {
+      totalPrice = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
+      nativeSymbol = event.payment.symbol || nativeSymbol;
+    }
+
+    // If still 0, try reading tx value from chain
+    if (totalPrice === 0 && event.transaction) {
+      const txData = await this.getTransactionData(event.transaction, chainName);
+      totalPrice = txData?.price || 0;
+    }
+
+    const representative = Array.isArray(event?.nfts) && event.nfts.length > 0 ? event.nfts[0] : event.nft;
+    const contractAddress = representative?.contract;
+    const tokenName = representative?.collection || representative?.name || 'Unknown';
+
+    let floorPrice = '-';
+    if (contractAddress) {
+      floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
+    }
+
+    // USD conversions
+    let nativeUsd = 0;
+    try {
+      nativeUsd = await this.getNativeTokenPriceUSD(chainName);
+    } catch (e) {
+      nativeUsd = 0;
+    }
+    const totalPriceUSD = nativeUsd && totalPrice ? totalPrice * nativeUsd : undefined;
+    const unitPrice = quantity > 0 ? totalPrice / quantity : 0;
+    const unitPriceUSD = nativeUsd && unitPrice ? unitPrice * nativeUsd : 0;
+
+    // Persist per-item cost basis (often 0 for free mints)
+    if (Array.isArray(event?.nfts) && event.nfts.length > 0) {
+      for (const item of event.nfts) {
+        if (item?.contract && item?.identifier) {
+          const purchaseKey = `${item.contract}_${item.identifier}`;
+          this.nftPurchases.set(purchaseKey, {
+            price: unitPrice,
+            priceUSD: unitPriceUSD,
+            timestamp: typeof event.event_timestamp === 'number'
+              ? event.event_timestamp * 1000
+              : new Date(event.event_timestamp || Date.now()).getTime(),
+            walletAddress: walletInfo.address
+          });
+        }
+      }
+      this.savePurchaseData();
+    }
+
+    const transactionData = {
+      type: 'mint',
+      isBulk: true,
+      walletName: walletInfo.name,
+      walletAddress: walletInfo.address,
+      tokenName: tokenName,
+      tokenId: representative?.identifier,
+      contractAddress: contractAddress,
+      transactionHash: txHash,
+      chainName: chainName,
+      timestamp: typeof event.event_timestamp === 'number'
+        ? new Date(event.event_timestamp * 1000)
+        : new Date(event.event_timestamp || Date.now()),
+      totalPrice: totalPrice,
+      totalPriceUSD: totalPriceUSD,
+      quantity: quantity,
+      imageUrl: representative?.image_url,
+      nftName: representative?.name,
+      nativeSymbol: nativeSymbol,
+      floorPrice: floorPrice
+    };
+
+    console.log(`   📦 Bulk Mint Data ready: ${quantity} items, total ${totalPrice} ${nativeSymbol}`);
+    await this.sendDiscordNotification(transactionData, this);
   }
 
   async getOrderDetails(orderHash, chainName) {

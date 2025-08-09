@@ -25,7 +25,7 @@ async function main() {
     console.log('\n✅ Bot initialized successfully!');
     console.log(`📊 Tracking ${wallets.length} wallets`);
     console.log(`⏱️  Scan interval: ${config.scanInterval / 1000 / 60} minutes`);
-    console.log('🔗 Chains: Ethereum & Base');
+    console.log('🔗 Chains: OpenSea-supported EVM chains');
     console.log('='.repeat(50));
     
     // Start tracking
