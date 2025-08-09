@@ -2158,12 +2158,32 @@ class NFTTracker {
                   // Try to get price from the event
                   let price = 0;
                   let priceUSD = 0;
+                  const chainName = this.getChainFromOpenSeaChain(event.chain);
                   
                   if (event.payment && event.payment.quantity) {
                     price = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
-                    // Calculate USD price using native token price
-                    const nativePriceUSD = await this.getNativeTokenPriceUSD(this.getChainFromOpenSeaChain(event.chain));
+                    const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
                     priceUSD = price * nativePriceUSD;
+                  } else {
+                    // Fallbacks when payment is missing
+                    try {
+                      if (event.order_hash) {
+                        const order = await this.getOrderDetails(event.order_hash, chainName);
+                        if (order && order.price) {
+                          price = order.price;
+                          priceUSD = order.priceUSD || 0;
+                        }
+                      }
+                      if (price === 0 && event.transaction) {
+                        const tx = await this.getTransactionData(event.transaction, chainName);
+                        if (tx && tx.price) {
+                          price = tx.price;
+                          priceUSD = tx.priceUSD || 0;
+                        }
+                      }
+                    } catch (e) {
+                      // ignore fallback failures
+                    }
                   }
                   
                   const timestamp = typeof event.event_timestamp === 'number' 
