@@ -31,6 +31,57 @@ class NFTTracker {
     this.loadPurchaseData();
   }
 
+  /**
+   * Build a stable map key for contract + tokenId regardless of hex/decimal representation.
+   */
+  buildStablePurchaseKey(contractAddress, tokenId) {
+    try {
+      const contract = (contractAddress || '').toLowerCase();
+      if (!contract) return null;
+      if (tokenId == null) return `${contract}_unknown`;
+      const idStr = String(tokenId);
+      if (idStr.startsWith('0x')) {
+        // Hex to decimal
+        try {
+          const dec = BigInt(idStr).toString(10);
+          return `${contract}_${dec}`;
+        } catch {
+          return `${contract}_${idStr}`;
+        }
+      }
+      // Also normalize any accidental floats into integer-like strings
+      if (/^\d+(?:\.0+)?$/.test(idStr)) {
+        return `${contract}_${idStr.replace(/\.0+$/, '')}`;
+      }
+      return `${contract}_${idStr}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve existing purchase key by trying both original and stable forms and hex/dec permutations.
+   */
+  resolvePurchaseKey(contractAddress, tokenId) {
+    const originalKey = `${contractAddress}_${tokenId}`;
+    if (this.nftPurchases.has(originalKey)) return originalKey;
+    const stableKey = this.buildStablePurchaseKey(contractAddress, tokenId);
+    if (stableKey && this.nftPurchases.has(stableKey)) return stableKey;
+    // If tokenId is hex, try decimal and vice versa
+    try {
+      const idStr = String(tokenId);
+      if (idStr.startsWith('0x')) {
+        const dec = BigInt(idStr).toString(10);
+        const decKey = `${(contractAddress || '').toLowerCase()}_${dec}`;
+        if (this.nftPurchases.has(decKey)) return decKey;
+      } else if (/^\d+$/.test(idStr)) {
+        const hex = '0x' + BigInt(idStr).toString(16);
+        const hexKey = `${(contractAddress || '').toLowerCase()}_${hex}`;
+        if (this.nftPurchases.has(hexKey)) return hexKey;
+      }
+    } catch {}
+    return originalKey; // fall back; may miss but keeps behavior
+  }
   // Load purchase data from file
   loadPurchaseData() {
     try {
@@ -1596,6 +1647,11 @@ class NFTTracker {
         }
       }
 
+      // Normalize wrapped/native symbols for consistent display and logic
+      if (typeof nativeSymbol === 'string' && nativeSymbol.toUpperCase() === 'WETH') {
+        nativeSymbol = 'ETH';
+      }
+
       if (price === 0) {
         console.log(`   ❌ Skipping - no price information`);
         return;
@@ -1638,11 +1694,12 @@ class NFTTracker {
 
       // Pro sale: PnL
       if (isSale && this.nftPurchases) {
-        const purchaseKey = `${nft.contract}_${nft.identifier}`;
+        // Try to resolve purchase record robustly across potential tokenId formats
+        const purchaseKey = this.resolvePurchaseKey(nft.contract, nft.identifier);
         console.log(`   🔍 Looking for purchase data with key: ${purchaseKey}`);
         console.log(`   📊 Available purchase keys:`, Array.from(this.nftPurchases.keys()));
         
-        const purchaseData = this.nftPurchases.get(purchaseKey);
+        const purchaseData = purchaseKey ? this.nftPurchases.get(purchaseKey) : undefined;
         if (purchaseData) {
           transactionData.buyPrice = purchaseData.price;
           transactionData.buyPriceUSD = purchaseData.priceUSD;
@@ -1694,7 +1751,8 @@ class NFTTracker {
 
       // Pro purchase/mint: uložit pro PnL
       if ((isPurchase || isMint) && this.nftPurchases) {
-        const purchaseKey = `${nft.contract}_${nft.identifier}`;
+        // Store under stable key format, but preserve existing scheme for compatibility
+        const stableKey = this.buildStablePurchaseKey(nft.contract, nft.identifier);
         this.nftPurchases.set(purchaseKey, {
           price: price,
           priceUSD: priceUSD,
@@ -1703,6 +1761,10 @@ class NFTTracker {
             : new Date(event.event_timestamp).getTime(),
           walletAddress: walletInfo.address
         });
+        // Also store a stable key if different (avoids future mismatches when IDs vary by hex/decimal)
+        if (stableKey && stableKey !== purchaseKey) {
+          this.nftPurchases.set(stableKey, this.nftPurchases.get(purchaseKey));
+        }
         console.log(`   💾 Stored purchase data for future PnL calculation`);
         
         // Save to file for persistence
