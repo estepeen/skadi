@@ -13,6 +13,8 @@ class NFTTracker {
     this.trackedWallets = new Map(); // address -> { name, lastChecked }
     this.lastTransactions = new Map(); // address -> last transaction hash
     this.discordNotifier = new DiscordNotifier();
+    // Cache for native token USD prices to reduce CoinGecko calls and avoid rate limits
+    this.nativeUsdCache = new Map(); // key: chainNameLower -> { price, ts }
     // Deduplication set for OpenSea transaction hashes to avoid duplicate notifications
     this.processedOpenSeaTxHashes = new Set();
     // Track NFT purchases for PnL calculation
@@ -478,6 +480,13 @@ class NFTTracker {
 
   async getNativeTokenPriceUSD(chainName) {
     try {
+      // Serve from cache (5 minutes)
+      const cacheKey = (chainName || 'ethereum').toLowerCase();
+      const cached = this.nativeUsdCache.get(cacheKey);
+      if (cached && Date.now() - cached.ts < 5 * 60 * 1000) {
+        return cached.price;
+      }
+
       const chainIds = {
         'ethereum': 'ethereum',
         'base': 'ethereum', // Base uses ETH
@@ -493,19 +502,24 @@ class NFTTracker {
       const coinId = chainIds[chainName.toLowerCase()] || 'ethereum';
       
       // For chains that use ETH, use ETH price
+      let priceUsd = 2000;
       if (coinId === 'ethereum') {
         const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
         const data = await response.json();
-        return data.ethereum.usd || 2000;
+        priceUsd = Number(data?.ethereum?.usd) || 2000;
+      } else {
+        const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+        const data = await response.json();
+        priceUsd = Number(data?.[coinId]?.usd) || 2000;
       }
-      
-      // For other chains, try to get their native token price
-      const response = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
-      const data = await response.json();
-      return data[coinId]?.usd || 2000; // fallback to ETH price
+      // Store in cache
+      this.nativeUsdCache.set(cacheKey, { price: priceUsd, ts: Date.now() });
+      return priceUsd;
     } catch (error) {
-      console.error(`Error fetching ${chainName} price:`, error.message);
-      return 2000; // fallback price
+      // Quiet fallback to avoid log spam on rate limits
+      const fallback = 2000;
+      this.nativeUsdCache.set((chainName || 'ethereum').toLowerCase(), { price: fallback, ts: Date.now() });
+      return fallback;
     }
   }
 
