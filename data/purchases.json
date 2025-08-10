@@ -7654,5 +7654,233 @@
     "priceUSD": 916.8992319999999,
     "timestamp": 1754761583000,
     "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0x76c3388946529620cce29498fe7164b39aa69719_1136": {
+    "price": 0.01015,
+    "priceUSD": 42.81011175,
+    "timestamp": 1754820905000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_10581": {
+    "price": 0.368,
+    "priceUSD": 1551.7308799999998,
+    "timestamp": 1754814695000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_4445": {
+    "price": 0.37,
+    "priceUSD": 1560.1642,
+    "timestamp": 1754814683000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_9595": {
+    "price": 0.391,
+    "priceUSD": 1648.71406,
+    "timestamp": 1754814251000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_19225": {
+    "price": 0.412,
+    "priceUSD": 1737.2639199999999,
+    "timestamp": 1754813951000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_15939": {
+    "price": 0.427,
+    "priceUSD": 1800.51382,
+    "timestamp": 1754813759000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_16959": {
+    "price": 0.412,
+    "priceUSD": 1737.2639199999999,
+    "timestamp": 1754813603000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_19202": {
+    "price": 0.44,
+    "priceUSD": 1855.3304,
+    "timestamp": 1754813255000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_11084": {
+    "price": 0.41,
+    "priceUSD": 1728.8305999999998,
+    "timestamp": 1754813015000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_19468": {
+    "price": 0.41,
+    "priceUSD": 1728.8305999999998,
+    "timestamp": 1754812943000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_16903": {
+    "price": 0.401,
+    "priceUSD": 1690.88066,
+    "timestamp": 1754812859000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_9630": {
+    "price": 0.418,
+    "priceUSD": 1762.56388,
+    "timestamp": 1754812511000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_12748": {
+    "price": 0.415,
+    "priceUSD": 1749.9138999999998,
+    "timestamp": 1754812511000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_12084": {
+    "price": 0.43,
+    "priceUSD": 1813.1637999999998,
+    "timestamp": 1754811995000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_2896": {
+    "price": 0.43,
+    "priceUSD": 1813.1637999999998,
+    "timestamp": 1754811587000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_8107": {
+    "price": 0.338,
+    "priceUSD": 1425.23108,
+    "timestamp": 1754809667000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_2230": {
+    "price": 0.355,
+    "priceUSD": 1496.9143,
+    "timestamp": 1754809559000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_16012": {
+    "price": 0.371,
+    "priceUSD": 1564.38086,
+    "timestamp": 1754809343000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_2152": {
+    "price": 0.378,
+    "priceUSD": 1593.8974799999999,
+    "timestamp": 1754809067000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_1127": {
+    "price": 0.324,
+    "priceUSD": 1366.19784,
+    "timestamp": 1754806787000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_9521": {
+    "price": 0.358999,
+    "priceUSD": 1513.77672334,
+    "timestamp": 1754806571000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_9286": {
+    "price": 0.357,
+    "priceUSD": 1505.3476199999998,
+    "timestamp": 1754806271000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xd774557b647330c91bf44cfeab205095f7e6c367_5151": {
+    "price": 0.357,
+    "priceUSD": 1505.3476199999998,
+    "timestamp": 1754806235000,
+    "walletAddress": "0x414826beb718f2b204bca67b949604bdc739fcba"
+  },
+  "0xb8ea78fcacef50d41375e44e6814ebba36bb33c4_3457": {
+    "price": 0.351,
+    "priceUSD": 1480.04766,
+    "timestamp": 1754839823000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_54984": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754825531000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_55092": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754823611000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_11704": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754823227000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_55190": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754823011000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_31824": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754817803000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_36706": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754817803000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_82109": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754817803000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_23974": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754817803000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_72571": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754817803000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xbe9371326f91345777b04394448c23e2bfeaa826_60219": {
+    "price": 0.0183,
+    "priceUSD": 77.164878,
+    "timestamp": 1754817803000,
+    "walletAddress": "0x2487e611ff876c101dd2b31758102953f4760af5"
+  },
+  "0xba5e05cb26b78eda3a2f8e3b3814726305dcac83_276": {
+    "price": 0.0016999,
+    "priceUSD": 7.168767283,
+    "timestamp": 1754740075000,
+    "walletAddress": "0x834711f749fe36dc4a5ae135267b88d0aaad8f3d"
+  },
+  "0xba5e05cb26b78eda3a2f8e3b3814726305dcac83_245": {
+    "price": 0.001699,
+    "priceUSD": 7.16497183,
+    "timestamp": 1754740075000,
+    "walletAddress": "0x834711f749fe36dc4a5ae135267b88d0aaad8f3d"
+  },
+  "0xba5e05cb26b78eda3a2f8e3b3814726305dcac83_13": {
+    "price": 0.001688,
+    "priceUSD": 7.11858296,
+    "timestamp": 1754736139000,
+    "walletAddress": "0x834711f749fe36dc4a5ae135267b88d0aaad8f3d"
+  },
+  "0x1260f90e0b1c482b38b88f26dee17c57615d670b_3496": {
+    "price": 0.0069,
+    "priceUSD": 29.098473,
+    "timestamp": 1754662997000,
+    "walletAddress": "0x834711f749fe36dc4a5ae135267b88d0aaad8f3d"
   }
 }

@@ -129,7 +129,20 @@ class NFTTracker {
       try {
         console.log('🔗 Initializing Discord connection...');
         await this.discordNotifier.connect();
-        console.log('✅ Discord integration enabled and ready');
+        
+        // Wait for the bot to be ready
+        let attempts = 0;
+        const maxAttempts = 30; // 30 seconds timeout
+        while (!this.discordNotifier.isReady && attempts < maxAttempts) {
+          await this.sleep(1000); // Wait 1 second
+          attempts++;
+        }
+        
+        if (this.discordNotifier.isReady) {
+          console.log('✅ Discord integration enabled and ready');
+        } else {
+          throw new Error('Discord bot failed to become ready within timeout');
+        }
       } catch (error) {
         console.error('❌ Discord integration failed:', error.message);
         console.log('⚠️ Discord notifications will be disabled for this session');
