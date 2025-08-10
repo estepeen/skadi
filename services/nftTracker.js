@@ -1405,8 +1405,8 @@ class NFTTracker {
       
       console.log(`🔍 Checking ${walletInfo.name} activity on OpenSea (since: ${new Date(lastEventTimestamp * 1000).toISOString()})`);
       
-      // Požadovat pouze sale a mint eventy
-      const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&limit=20`, {
+      // Požadovat sale, mint, bid_entered a bid_accepted eventy pro kompletní pokrytí
+      const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&event_type=bid_entered&event_type=bid_accepted&limit=20`, {
         headers: {
           'X-API-KEY': apiKey,
           'Accept': 'application/json'
@@ -1546,9 +1546,9 @@ class NFTTracker {
       console.log(`   Contract: ${nft?.contract || 'Unknown'}`);
       console.log(`   Token ID: ${nft?.identifier || 'Unknown'}`);
 
-      // Zpracovávej pouze sale a mint
-      if (eventType !== 'sale' && eventType !== 'mint') {
-        console.log(`   ❌ Skipping - not a sale or mint event`);
+      // Zpracovávej sale, mint, bid_entered a bid_accepted eventy
+      if (eventType !== 'sale' && eventType !== 'mint' && eventType !== 'bid_entered' && eventType !== 'bid_accepted') {
+        console.log(`   ❌ Skipping - not a sale, mint, or bid event`);
         return;
       }
 
@@ -1556,6 +1556,8 @@ class NFTTracker {
       console.log(`   Debug - Seller: "${event.seller}"`);
       console.log(`   Debug - Buyer: "${event.buyer}"`);
       console.log(`   Debug - To: "${event.to_address}"`);
+      console.log(`   Debug - Bidder: "${event.bidder}"`);
+      console.log(`   Debug - Maker: "${event.maker}"`);
       const walletAddress = typeof walletInfo?.address === 'string' ? walletInfo.address.toLowerCase() : '';
       console.log(`   Debug - Wallet: "${walletAddress}"`);
 
@@ -1563,6 +1565,7 @@ class NFTTracker {
       let isSale = false;
       let isPurchase = false;
       let isMint = false;
+      let isBidAccepted = false;
       
       try {
         if (eventType === 'sale') {
@@ -1584,14 +1587,35 @@ class NFTTracker {
             console.log(`   ✅ Detected MINT: ${walletInfo.name} minted NFT`);
           }
         }
+        if (eventType === 'bid_accepted') {
+          // Kontrola přijetí bidu (STPN je maker/seller - přijal WETH bid)
+          if (typeof event.maker === 'string' && event.maker.toLowerCase() === walletAddress) {
+            isSale = true;
+            isBidAccepted = true;
+            console.log(`   ✅ Detected BID ACCEPTED: ${walletInfo.name} accepted WETH bid for NFT`);
+          }
+          // Kontrola nákupu přes bid (STPN je bidder - koupil NFT přes bid)
+          if (typeof event.bidder === 'string' && event.bidder.toLowerCase() === walletAddress) {
+            isPurchase = true;
+            console.log(`   ✅ Detected BID PURCHASE: ${walletInfo.name} bought NFT via bid`);
+          }
+        }
+        if (eventType === 'bid_entered') {
+          // Kontrola vložení bidu (STPN je bidder - vložil WETH bid)
+          if (typeof event.bidder === 'string' && event.bidder.toLowerCase() === walletAddress) {
+            console.log(`   ℹ️ Detected BID ENTERED: ${walletInfo.name} placed WETH bid (not a transaction yet)`);
+            // Bid vložení není transakce, jen informace
+            return;
+          }
+        }
       } catch (error) {
         console.log(`   ❌ Error determining transaction type: ${error.message}`);
         return;
       }
       
-      console.log(`   Final: Sale=${isSale}, Purchase=${isPurchase}, Mint=${isMint}`);
+      console.log(`   Final: Sale=${isSale}, Purchase=${isPurchase}, Mint=${isMint}, BidAccepted=${isBidAccepted}`);
       
-      if (!isSale && !isPurchase && !isMint) {
+      if (!isSale && !isPurchase && !isMint && !isBidAccepted) {
         console.log(`   ❌ Skipping - not a relevant transaction for this wallet`);
         return;
       }
@@ -1648,6 +1672,21 @@ class NFTTracker {
         console.log(`   Payment Price: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
       }
 
+      // Pro bid_accepted eventy: zkus získat cenu z bid data
+      if (isBidAccepted && price === 0 && event.bid) {
+        try {
+          if (event.bid.amount) {
+            price = parseFloat(event.bid.amount) / Math.pow(10, event.bid.decimals || 18);
+            const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
+            priceUSD = price * nativePriceUSD;
+            nativeSymbol = event.bid.currency || 'WETH';
+            console.log(`   Bid Price: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
+          }
+        } catch (error) {
+          console.log(`   ⚠️ Could not parse bid price: ${error.message}`);
+        }
+      }
+
       // Special handling for MINT: if still no price, get from chain tx value via *scan proxy
       if (isMint && price === 0 && event.transaction) {
         const txData = await this.getTransactionData(event.transaction, chainName);
@@ -1683,8 +1722,8 @@ class NFTTracker {
         type: isMint ? 'mint' : (isPurchase ? 'purchase' : 'sale'),
         walletName: walletInfo.name,
         walletAddress: walletInfo.address,
-        fromAddress: event.seller || 'Unknown',
-        toAddress: event.buyer || event.to_address || 'Unknown',
+        fromAddress: event.seller || event.maker || 'Unknown',
+        toAddress: event.buyer || event.bidder || event.to_address || 'Unknown',
         tokenName: nft.collection || 'Unknown',
         tokenId: nft.identifier,
         contractAddress: nft.contract,
@@ -1699,7 +1738,8 @@ class NFTTracker {
         imageUrl: nft.image_url,
         nftName: nft.name || `${nft.collection} #${nft.identifier}`,
         nativeSymbol: nativeSymbol,
-        floorPrice: floorPrice
+        floorPrice: floorPrice,
+        isBidAccepted: isBidAccepted // Přidat flag pro bid accepted
       };
 
       console.log(`   📊 Transaction Data: ${transactionData.type} - ${transactionData.nftName} for ${price} ${nativeSymbol}`);

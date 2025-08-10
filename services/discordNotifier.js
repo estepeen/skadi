@@ -192,7 +192,12 @@ class DiscordNotifier {
     } else if (type === 'sale') {
       // Always start with red dot, and move special emoji to the end
       const suffix = (emoji && emoji !== '🔴') ? ` ${emoji}` : '';
-      displayTitle = `🔴 ${walletName} ${action} ${nftDisplayName}${suffix}`;
+      // Special handling for bid accepted events
+      if (transactionData.isBidAccepted) {
+        displayTitle = `🔴 ${walletName} accepted WETH bid for ${nftDisplayName} 💰`;
+      } else {
+        displayTitle = `🔴 ${walletName} ${action} ${nftDisplayName}${suffix}`;
+      }
     } else if (isBulk && type === 'purchase') {
       // Title rules for bulk BUY (updated):
       // 2  → "bought 2x {Collection} NFT 👏"
@@ -253,6 +258,9 @@ class DiscordNotifier {
       if (type === 'purchase') {
         // Single purchase: show full NFT display name (with #ID) as link and collection link
         descriptionText = `${walletLink} just bought ${nftLink} from ${collectionLink} collection.`;
+      } else if (type === 'sale' && transactionData.isBidAccepted) {
+        // Bid accepted: special description for WETH bid acceptance
+        descriptionText = `${walletLink} just accepted a WETH bid for ${nftLink} (${collectionLink} collection).`;
       } else {
         descriptionText = `${walletLink} just ${action} ${nftLink} (${collectionLink} collection).`;
       }
