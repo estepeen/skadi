@@ -29,6 +29,25 @@ class DiscordNotifier {
     try {
       await this.client.login(config.discord.botToken);
       console.log('🔗 Connecting to Discord...');
+      
+      // Wait for the bot to be ready
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Discord bot connection timeout'));
+        }, 30000); // 30 second timeout
+        
+        this.client.once('ready', () => {
+          clearTimeout(timeout);
+          console.log(`🤖 Discord bot logged in as ${this.client.user.tag}`);
+          this.isReady = true;
+          resolve();
+        });
+        
+        this.client.once('error', (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
     } catch (error) {
       console.error('❌ Failed to connect to Discord:', error.message);
       throw error;
