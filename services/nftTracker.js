@@ -110,13 +110,16 @@ class NFTTracker {
   async initialize(wallets) {
     console.log('Initializing NFT Tracker...');
     
+    // Get current timestamp in seconds
+    const currentTime = Math.floor(Date.now() / 1000);
+    
     for (const wallet of wallets) {
       this.trackedWallets.set(wallet.address, {
         address: wallet.address,
         name: wallet.name,
         lastChecked: Date.now(),
         // Start with a small backoff window to avoid missing fresh events due to clock skews
-        lastEventTimestamp: Math.floor(Date.now() / 1000) - 300 // 5 min backoff
+        lastEventTimestamp: currentTime - 300 // 5 min backoff from current time
       });
       console.log(`Tracking wallet: ${wallet.name} (${wallet.address})`);
     }
@@ -124,10 +127,13 @@ class NFTTracker {
     // Initialize Discord notifier if configured
     if (config.discord.botToken && config.discord.channelId) {
       try {
+        console.log('🔗 Initializing Discord connection...');
         await this.discordNotifier.connect();
-        console.log('✅ Discord integration enabled');
+        console.log('✅ Discord integration enabled and ready');
       } catch (error) {
         console.error('❌ Discord integration failed:', error.message);
+        console.log('⚠️ Discord notifications will be disabled for this session');
+        this.discordNotifier = null;
       }
     } else {
       console.log('⚠️ Discord integration disabled - missing bot token or channel ID');
@@ -351,8 +357,14 @@ class NFTTracker {
   }
 
   async sendDiscordNotification(transactionData, nftTracker = null) {
+    if (!this.discordNotifier) {
+      console.log('⚠️ Discord notifier not available, skipping notification');
+      return;
+    }
+    
     try {
       await this.discordNotifier.sendNotification(transactionData, nftTracker);
+      console.log('✅ Discord notification sent successfully!');
     } catch (error) {
       console.error('❌ Failed to send Discord notification:', error.message);
     }
@@ -372,7 +384,7 @@ class NFTTracker {
           await this.sleep(2000); // 2 seconds between wallets
         }
         
-        // Wait before next scan (5 minutes)
+        // Wait before next scan
         console.log(`\n⏱️ Waiting ${config.scanInterval / 1000 / 60} minutes before next scan...`);
         await this.sleep(config.scanInterval);
         
