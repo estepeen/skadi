@@ -7882,5 +7882,11 @@
     "priceUSD": 29.098473,
     "timestamp": 1754662997000,
     "walletAddress": "0x834711f749fe36dc4a5ae135267b88d0aaad8f3d"
+  },
+  "0x8e7e3add81feb774227e79b4e4f0ff227213db7a_3510": {
+    "price": 0.0013488,
+    "priceUSD": 5.688577488000001,
+    "timestamp": 1754841231000,
+    "walletAddress": "0x834711f749fe36dc4a5ae135267b88d0aaad8f3d"
   }
 }
