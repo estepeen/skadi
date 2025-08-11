@@ -164,7 +164,7 @@ class CollectionCommand {
 
 
 
-      embed.setFooter({ text: `Source: OpenSea API v2 • /collection ${slug}` })
+      embed.setFooter({ text: `⚡ Powered by STPNGPT • /collection ${slug}` })
         .setTimestamp();
 
       // Thumbnail
