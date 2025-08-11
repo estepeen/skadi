@@ -1,5 +1,6 @@
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, Events } = require('discord.js');
 const config = require('../config');
+const CommandManager = require('./commandManager');
 
 class DiscordNotifier {
   constructor() {
@@ -11,17 +12,32 @@ class DiscordNotifier {
     });
     
     this.isReady = false;
+    this.commandManager = new CommandManager();
     this.setupEventHandlers();
   }
 
   setupEventHandlers() {
-    this.client.on('ready', () => {
+    this.client.on('ready', async () => {
       console.log(`🤖 Discord bot logged in as ${this.client.user.tag}`);
       this.isReady = true;
+      
+      // Register slash commands
+      await this.registerSlashCommands();
     });
 
     this.client.on('error', (error) => {
       console.error('❌ Discord bot error:', error);
+    });
+
+    // Handle slash command interactions
+    this.client.on(Events.InteractionCreate, async (interaction) => {
+      if (!interaction.isChatInputCommand()) return;
+      
+      try {
+        await this.commandManager.executeCommand(interaction);
+      } catch (error) {
+        console.error('❌ Error handling interaction:', error);
+      }
     });
   }
 
@@ -51,6 +67,26 @@ class DiscordNotifier {
     } catch (error) {
       console.error('❌ Failed to connect to Discord:', error.message);
       throw error;
+    }
+  }
+
+  async registerSlashCommands() {
+    try {
+      console.log('🔧 Registering slash commands...');
+      
+      // Get all commands from command manager
+      const commands = this.commandManager.getCommands();
+      
+      // Register commands globally (this may take up to 1 hour to propagate)
+      const result = await this.client.application.commands.set(commands);
+      
+      console.log(`✅ Successfully registered ${result.size} slash commands:`);
+      result.forEach(command => {
+        console.log(`   /${command.name}: ${command.description}`);
+      });
+      
+    } catch (error) {
+      console.error('❌ Failed to register slash commands:', error);
     }
   }
 
@@ -88,7 +124,7 @@ class DiscordNotifier {
       type, walletName, walletAddress, fromAddress, toAddress, tokenName, tokenId, contractAddress,
       transactionHash, chainName, timestamp, price, priceUSD, totalPrice, totalPriceUSD,
       quantity = 1, imageUrl, nftName, nativeSymbol, floorPrice, buyPrice, buyPriceUSD, isSweep = false, buyTimestamp,
-      isBulk = false
+      isBulk = false, holdTime, pnl, pnlUSD
     } = transactionData;
 
     // Get collection info for better display
@@ -316,7 +352,13 @@ class DiscordNotifier {
     if (type === 'sale') {
       // Buy Price (from stored purchase data)
       let buyPriceDisplay = '-';
-      if (buyPrice && buyPrice > 0) {
+      if (isBulk && buyPrice && buyPrice > 0) {
+        // For bulk sales, use pre-calculated buy price
+        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const formattedPrice = this.formatPrice(buyPrice);
+        buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
+      } else if (buyPrice && buyPrice > 0) {
+        // For single sales, use buy price from purchase data
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
         const formattedPrice = this.formatPrice(buyPrice);
         buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
@@ -325,7 +367,13 @@ class DiscordNotifier {
 
       // Sell Price
       let sellPriceDisplay = '-';
-      if (price && price > 0) {
+      if (isBulk && totalPrice && totalPrice > 0) {
+        // For bulk sales, show total price
+        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const formattedPrice = this.formatPrice(totalPrice);
+        sellPriceDisplay = `${formattedPrice} ${displaySymbol}`;
+      } else if (price && price > 0) {
+        // For single sales, show individual price
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
         const formattedPrice = this.formatPrice(price);
         sellPriceDisplay = `${formattedPrice} ${displaySymbol}`;
@@ -335,11 +383,10 @@ class DiscordNotifier {
       // PnL
       let pnlValue = '-';
       let pnlEmoji = '🫥';
-      if (buyPrice && price && buyPrice > 0 && price > 0) {
-        const pnl = price - buyPrice;
-        const pnlUSD = priceUSD - buyPriceUSD;
+      
+      if (pnl !== undefined && pnlUSD !== undefined && buyPrice > 0) {
+        // Use pre-calculated PnL data (both bulk and single sales)
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
-
         const sign = pnl > 0 ? '+' : pnl < 0 ? '-' : '';
         const absPnl = Math.abs(pnl);
         const absUsd = Math.abs(pnlUSD);
@@ -373,6 +420,45 @@ class DiscordNotifier {
 
         pnlValue = `${sign}${ethContent}\n${sign}${usdContent}\n${sign}${percContent}`;
         pnlEmoji = pnl > 0 ? '🤑' : (pnl < 0 ? '😢' : '🫥');
+      } else if (buyPrice && price && buyPrice > 0 && price > 0) {
+        // Fallback: calculate PnL from prices if no pre-calculated data
+        const calculatedPnl = price - buyPrice;
+        const calculatedPnlUSD = (priceUSD || 0) - (buyPriceUSD || 0);
+        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+
+        const sign = calculatedPnl > 0 ? '+' : calculatedPnl < 0 ? '-' : '';
+        const absPnl = Math.abs(calculatedPnl);
+        const absUsd = Math.abs(calculatedPnlUSD);
+        const percentage = (calculatedPnl / buyPrice) * 100;
+
+        // ETH line: threshold < 0.0001, otherwise 4 decimals (<1) or 2 decimals (>=1)
+        let ethContent;
+        if (absPnl < 0.0001) {
+          ethContent = `<0.0001 ${displaySymbol}`;
+        } else if (absPnl >= 1) {
+          ethContent = `${Math.round(absPnl * 100) / 100} ${displaySymbol}`;
+        } else {
+          ethContent = `${absPnl.toFixed(4)} ${displaySymbol}`;
+        }
+
+        // USD line: threshold < $1
+        let usdContent;
+        if (isNaN(absUsd) || !isFinite(absUsd) || absUsd < 1) {
+          usdContent = '<$1';
+        } else {
+          usdContent = `$${Math.round(absUsd * 100) / 100}`;
+        }
+
+        // Percentage line: threshold < 1%
+        let percContent;
+        if (isNaN(percentage) || !isFinite(percentage) || Math.abs(percentage) < 1) {
+          percContent = '<1%';
+        } else {
+          percContent = `${Math.abs(percentage).toFixed(1)}%`;
+        }
+
+        pnlValue = `${sign}${ethContent}\n${sign}${usdContent}\n${sign}${percContent}`;
+        pnlEmoji = calculatedPnl > 0 ? '🤑' : (calculatedPnl < 0 ? '😢' : '🫥');
       }
       embed.addFields({ name: `${pnlEmoji} PnL`, value: pnlValue, inline: true });
     }
@@ -382,7 +468,12 @@ class DiscordNotifier {
       // HODL time only for sales
       if (type === 'sale') {
         let hodlTime = '-';
-        if (buyTimestamp) {
+        
+        if (holdTime && holdTime !== '-') {
+          // Use pre-calculated hold time (both bulk and single sales)
+          hodlTime = holdTime;
+        } else if (buyTimestamp) {
+          // Fallback: calculate from timestamps if no pre-calculated data
           const sellTime = new Date(timestamp);
           const buyTime = new Date(buyTimestamp);
           const timeDiffMs = sellTime.getTime() - buyTime.getTime();
@@ -559,6 +650,9 @@ class DiscordNotifier {
   }
 
   async disconnect() {
+    if (this.commandManager) {
+      await this.commandManager.cleanup();
+    }
     if (this.client) {
       await this.client.destroy();
       console.log('🔌 Discord bot disconnected');

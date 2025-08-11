@@ -111,7 +111,8 @@ Ensure these are set in your VPS:
 ```bash
 export DISCORD_BOT_TOKEN="your_bot_token"
 export DISCORD_CHANNEL_ID="your_channel_id"
-export ETHERSCAN_API_KEY="your_etherscan_key"
+export OPENSEA_API_KEY="your_opensea_api_key"
+export DISCORD_NFTS_ROLE_ID="your_nfts_role_id"
 ```
 
 ## Bot Restart

@@ -1,67 +1,60 @@
+#!/usr/bin/env node
 require('dotenv').config();
-const config = require('./config');
 
-function checkConfiguration() {
-  console.log('🔍 Configuration Check');
-  console.log('='.repeat(50));
+console.log('🔧 NFT Tracker Bot - Configuration Check');
+console.log('='.repeat(50));
+
+// Check environment variables
+console.log('\n🔑 Environment Variables:');
+console.log(`   DISCORD_BOT_TOKEN: ${process.env.DISCORD_BOT_TOKEN ? '✅ Set' : '❌ Missing'}`);
+console.log(`   DISCORD_CHANNEL_ID: ${process.env.DISCORD_CHANNEL_ID ? '✅ Set' : '❌ Missing'}`);
+console.log(`   DISCORD_NFTS_ROLE_ID: ${process.env.DISCORD_NFTS_ROLE_ID ? '✅ Set' : '❌ Missing'}`);
+console.log(`   OPENSEA_API_KEY: ${process.env.OPENSEA_API_KEY ? '✅ Set' : '❌ Missing'}`);
+console.log(`   SCAN_INTERVAL: ${process.env.SCAN_INTERVAL ? '✅ Set' : '❌ Missing'}`);
+
+// Check config file
+try {
+  const config = require('./config');
   
-  // Check environment variables
-  console.log('📋 Environment Variables:');
-  console.log(`   DISCORD_BOT_TOKEN: ${process.env.DISCORD_BOT_TOKEN ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   DISCORD_CHANNEL_ID: ${process.env.DISCORD_CHANNEL_ID ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   ETHERSCAN_API_KEY: ${process.env.ETHERSCAN_API_KEY ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   OPENSEA_API_KEY: ${process.env.OPENSEA_API_KEY ? '✅ Set' : '❌ Missing'}`);
-  console.log(`   SCAN_INTERVAL: ${process.env.SCAN_INTERVAL ? process.env.SCAN_INTERVAL + 'ms' : '60000ms (default)'}`);
-  
-  console.log('\n⚙️ Loaded Configuration:');
+  console.log('\n⚙️  Configuration File:');
   console.log(`   Discord Bot Token: ${config.discord.botToken ? '✅ Configured' : '❌ Missing'}`);
   console.log(`   Discord Channel ID: ${config.discord.channelId ? '✅ Configured' : '❌ Missing'}`);
-  console.log(`   Etherscan API Key: ${config.etherscan.apiKey ? '✅ Configured' : '❌ Missing'}`);
+  console.log(`   Discord NFTs Role ID: ${config.discord.nftsRoleId ? '✅ Configured' : '❌ Missing'}`);
   console.log(`   OpenSea API Key: ${config.opensea.apiKey ? '✅ Configured' : '❌ Missing'}`);
   console.log(`   Scan Interval: ${config.scanInterval}ms (${config.scanInterval / 1000 / 60} minutes)`);
   console.log(`   CSV File: ${config.csvFile}`);
   
-  // Check if Discord is properly configured
-  if (config.discord.botToken && config.discord.channelId) {
-    console.log('\n✅ Discord is properly configured!');
-  } else {
-    console.log('\n❌ Discord is not properly configured!');
-    console.log('Missing required environment variables:');
-    if (!config.discord.botToken) console.log('   - DISCORD_BOT_TOKEN');
-    if (!config.discord.channelId) console.log('   - DISCORD_CHANNEL_ID');
-  }
-  
-  // Check if APIs are configured
   console.log('\n🔑 API Configuration:');
-  if (config.etherscan.apiKey) {
-    console.log('   ✅ Etherscan API: Configured');
-  } else {
-    console.log('   ⚠️ Etherscan API: Not configured (optional)');
-  }
-  
   if (config.opensea.apiKey) {
     console.log('   ✅ OpenSea API: Configured');
   } else {
     console.log('   ❌ OpenSea API: Not configured (required)');
   }
   
-  // Check CSV file
   const fs = require('fs');
   if (fs.existsSync(config.csvFile)) {
     const csvContent = fs.readFileSync(config.csvFile, 'utf8');
     const lines = csvContent.trim().split('\n');
-    const walletCount = lines.length - 1; // Subtract header
-    console.log(`\n📁 CSV File: ${config.csvFile} (${walletCount} wallets)`);
+    const walletCount = lines.length - 1; // Subtract header line
+    
+    console.log('\n👥 Wallets Configuration:');
+    console.log(`   CSV File: ${config.csvFile} ✅`);
+    console.log(`   Wallet Count: ${walletCount}`);
+    
+    if (walletCount > 0) {
+      console.log('   First few wallets:');
+      lines.slice(1, Math.min(4, lines.length)).forEach((line, index) => {
+        const [address, name] = line.split(',');
+        console.log(`     ${index + 1}. ${name || 'Unnamed'} (${address})`);
+      });
+    }
   } else {
-    console.log(`\n❌ CSV File: ${config.csvFile} not found!`);
+    console.log('\n❌ CSV file not found:', config.csvFile);
   }
   
-  console.log('\n' + '='.repeat(50));
-  console.log('💡 Next steps:');
-  console.log('1. Create .env file with required variables');
-  console.log('2. Run: node test-discord.js');
-  console.log('3. Run: node check-config.js');
-  console.log('4. If everything is OK, run: npm start');
+} catch (error) {
+  console.log('\n❌ Error reading config:', error.message);
 }
 
-checkConfiguration(); 
+console.log('\n' + '='.repeat(50));
+console.log('✅ Configuration check complete!'); 
