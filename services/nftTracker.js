@@ -16,95 +16,12 @@ class NFTTracker {
     // Cache for native token USD prices to reduce CoinGecko calls and avoid rate limits
     this.nativeUsdCache = new Map(); // key: chainNameLower -> { price, ts }
     // Deduplication set for OpenSea transaction hashes to avoid duplicate notifications
-    this.processedOpenSeaTxHashes = new Set();
-    // Track NFT purchases for PnL calculation
-    this.nftPurchases = new Map(); // key: contractAddress_tokenId, value: {price, priceUSD, timestamp}
-    this.purchasesFile = path.join(__dirname, '../data/purchases.json');
+    this.processedOpenSeaTxs = new Set();
     
-    // Ensure data directory exists
-    const dataDir = path.dirname(this.purchasesFile);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
+    this.isInitialized = false;
     
-    // Load existing purchase data
-    this.loadPurchaseData();
-  }
-
-  /**
-   * Build a stable map key for contract + tokenId regardless of hex/decimal representation.
-   */
-  buildStablePurchaseKey(contractAddress, tokenId) {
-    try {
-      const contract = (contractAddress || '').toLowerCase();
-      if (!contract) return null;
-      if (tokenId == null) return `${contract}_unknown`;
-      const idStr = String(tokenId);
-      if (idStr.startsWith('0x')) {
-        // Hex to decimal
-        try {
-          const dec = BigInt(idStr).toString(10);
-          return `${contract}_${dec}`;
-        } catch {
-          return `${contract}_${idStr}`;
-        }
-      }
-      // Also normalize any accidental floats into integer-like strings
-      if (/^\d+(?:\.0+)?$/.test(idStr)) {
-        return `${contract}_${idStr.replace(/\.0+$/, '')}`;
-      }
-      return `${contract}_${idStr}`;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Resolve existing purchase key by trying both original and stable forms and hex/dec permutations.
-   */
-  resolvePurchaseKey(contractAddress, tokenId) {
-    const originalKey = `${contractAddress}_${tokenId}`;
-    if (this.nftPurchases.has(originalKey)) return originalKey;
-    const stableKey = this.buildStablePurchaseKey(contractAddress, tokenId);
-    if (stableKey && this.nftPurchases.has(stableKey)) return stableKey;
-    // If tokenId is hex, try decimal and vice versa
-    try {
-      const idStr = String(tokenId);
-      if (idStr.startsWith('0x')) {
-        const dec = BigInt(idStr).toString(10);
-        const decKey = `${(contractAddress || '').toLowerCase()}_${dec}`;
-        if (this.nftPurchases.has(decKey)) return decKey;
-      } else if (/^\d+$/.test(idStr)) {
-        const hex = '0x' + BigInt(idStr).toString(16);
-        const hexKey = `${(contractAddress || '').toLowerCase()}_${hex}`;
-        if (this.nftPurchases.has(hexKey)) return hexKey;
-      }
-    } catch {}
-    return originalKey; // fall back; may miss but keeps behavior
-  }
-  // Load purchase data from file
-  loadPurchaseData() {
-    try {
-      if (fs.existsSync(this.purchasesFile)) {
-        const data = fs.readFileSync(this.purchasesFile, 'utf8');
-        const purchases = JSON.parse(data);
-        this.nftPurchases = new Map(Object.entries(purchases));
-        console.log(`📂 Loaded ${this.nftPurchases.size} purchase records from file`);
-      }
-    } catch (error) {
-      console.log('⚠️ Could not load purchase data:', error.message);
-      this.nftPurchases = new Map();
-    }
-  }
-
-  // Save purchase data to file
-  savePurchaseData() {
-    try {
-      const purchases = Object.fromEntries(this.nftPurchases);
-      fs.writeFileSync(this.purchasesFile, JSON.stringify(purchases, null, 2));
-    } catch (error) {
-      console.error('❌ Error saving purchase data:', error.message);
-    }
+    // No more purchases.json dependency - we always fetch from OpenSea API
+    console.log('✅ NFT Tracker initialized without purchases.json dependency');
   }
 
   async initialize(wallets) {
@@ -152,11 +69,10 @@ class NFTTracker {
       console.log('⚠️ Discord integration disabled - missing bot token or channel ID');
     }
 
-    // Fetch historical purchase data to populate the database
-    await this.fetchHistoricalPurchases();
+    // No need to fetch historical purchases or save data - we'll fetch from OpenSea API in real-time
+    console.log('🚀 NFT Tracker ready - will fetch purchase data from OpenSea API when needed');
     
-    // Save the fetched data
-    this.savePurchaseData();
+    this.isInitialized = true;
   }
 
   async checkNFTTransfers(chain = 'ethereum') {
@@ -199,41 +115,62 @@ class NFTTracker {
 
   async getRecentTransactions(address, chainName) {
     try {
-      const apiKey = config.etherscan.apiKey;
+      const apiKey = config.opensea.apiKey;
       
-      // Map chain names to their respective API endpoints
-      const chainApis = {
-        'Ethereum': 'https://api.etherscan.io',
-        'Base': 'https://api.basescan.org',
-        'Polygon': 'https://api.polygonscan.com',
-        'Arbitrum': 'https://api.arbiscan.io',
-        'Optimism': 'https://api-optimistic.etherscan.io',
-        'BSC': 'https://api.bscscan.com',
-        'Avalanche': 'https://api.snowtrace.io',
-        'Berachain': 'https://api.berascan.com',
-        'Abstract': 'https://api.abstract.money'
+      // Map chain names to OpenSea chain identifiers
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
       };
       
-      const baseUrl = chainApis[chainName];
+      const chain = chainMap[chainName];
       
-      if (!baseUrl) {
-        console.log(`⚠️ No API endpoint configured for ${chainName}`);
+      if (!chain) {
+        console.log(`⚠️ No OpenSea chain mapping for ${chainName}`);
         return [];
       }
       
-      const response = await fetch(`${baseUrl}/api?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=2&sort=desc&apikey=${apiKey}`);
-      const data = await response.json();
+      console.log(`🔍 Fetching recent transactions for ${address} on ${chainName} via OpenSea API V2...`);
       
-      if (data.status === '1' && data.result) {
-        return data.result.filter(tx => 
-          tx.isError === '0' && 
-          (tx.methodId === '0xa9059cbb' || tx.methodId === '0x23b872dd' || tx.methodId === '0xf242432a')
-        );
+      // Use OpenSea API V2 to get recent events for the wallet
+      const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${chain}/account/${address}?event_type=item_transferred&limit=10`, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.asset_events && data.asset_events.length > 0) {
+          console.log(`✅ Found ${data.asset_events.length} recent events for ${address}`);
+          
+          // Convert OpenSea events to transaction format
+          return data.asset_events.map(event => ({
+            hash: event.transaction_hash,
+            from: event.seller?.address || event.from_account?.address,
+            to: event.buyer?.address || event.to_account?.address,
+            contractAddress: event.asset?.asset_contract?.address,
+            tokenId: event.asset?.token_id,
+            methodId: '0x23b872dd', // ERC-721 transfer
+            timestamp: event.event_timestamp,
+            price: event.payment?.amount ? Number(event.payment.amount) / Math.pow(10, event.payment.decimals || 18) : 0,
+            priceUSD: event.payment?.usd_amount || 0
+          }));
+        }
+      } else {
+        console.log(`⚠️ OpenSea API V2 returned status ${response.status}`);
       }
       
       return [];
     } catch (error) {
-      console.error('Error fetching recent transactions:', error.message);
+      console.error('Error fetching recent transactions via OpenSea API V2:', error.message);
       return [];
     }
   }
@@ -291,14 +228,19 @@ class NFTTracker {
     // Get floor price from OpenSea
     const floorPrice = await this.getFloorPrice(tx.contractAddress, chainName);
     
-    // Store purchase data for PnL calculation
-    const purchaseKey = `${tx.contractAddress}_${tx.tokenId}`;
-    this.nftPurchases.set(purchaseKey, {
-      price: transactionData.price,
-      priceUSD: transactionData.priceUSD,
-      timestamp: new Date(),
-      walletAddress: tx.to
-    });
+    // Get collection royalties info
+    let royaltiesInfo = null;
+    try {
+      const collectionInfo = await this.getCollectionInfo(tx.contractAddress, chainName);
+      if (collectionInfo && collectionInfo.slug) {
+        royaltiesInfo = await this.getCollectionRoyalties(collectionInfo.slug, chainName);
+      }
+    } catch (error) {
+      console.log(`⚠️ Could not fetch royalties info: ${error.message}`);
+    }
+    
+    // No need to store purchase data - we'll fetch it from OpenSea API when needed for PnL calculation
+    console.log('💾 Purchase data will be fetched from OpenSea API when needed for PnL calculation');
     
     // Send Discord notification
     await this.sendDiscordNotification({
@@ -317,7 +259,8 @@ class NFTTracker {
       quantity: 1,
       imageUrl: nftMetadata.imageUrl,
       nftName: nftMetadata.name,
-      floorPrice: floorPrice
+      floorPrice: floorPrice,
+      royaltiesInfo: royaltiesInfo
     });
   }
 
@@ -337,9 +280,73 @@ class NFTTracker {
     // Get floor price from OpenSea
     const floorPrice = await this.getFloorPrice(tx.contractAddress, chainName);
     
-    // Get purchase data for PnL calculation
-    const purchaseKey = `${tx.contractAddress}_${tx.tokenId}`;
-    const purchaseData = this.nftPurchases.get(purchaseKey);
+    // Get collection royalties info
+    let royaltiesInfo = null;
+    try {
+      const collectionInfo = await this.getCollectionInfo(tx.contractAddress, chainName);
+      if (collectionInfo && collectionInfo.slug) {
+        royaltiesInfo = await this.getCollectionRoyalties(collectionInfo.slug, chainName);
+      }
+    } catch (error) {
+      console.log(`⚠️ Could not fetch royalties info: ${error.message}`);
+    }
+    
+    // Always search for purchase data via OpenSea API for real-time accuracy
+    console.log(`🔍 Searching OpenSea API for purchase data for ${nftMetadata.name || `#${tx.tokenId}`}...`);
+    
+    let purchaseData = null;
+    let pnl = 0;
+    let pnlUSD = 0;
+    let holdTime = '-';
+    
+    try {
+      // Always search for purchase data via OpenSea API for real-time accuracy
+      console.log(`   🔍 Searching OpenSea API for purchase data...`);
+      purchaseData = await this.recoverPurchaseData(tx.contractAddress, tx.tokenId, tx.from, chainName);
+      
+      if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+        console.log(`   ✅ Found purchase data via API: ${purchaseData.price} ETH`);
+        
+        // Calculate PnL if we have purchase data
+        if (transactionData.price > 0) {
+          pnl = transactionData.price - purchaseData.price;
+          pnlUSD = (transactionData.priceUSD || 0) - (purchaseData.priceUSD || 0);
+          
+          // Calculate hold time
+          if (purchaseData.timestamp) {
+            const saleTimestamp = new Date().getTime();
+            const holdTimeMs = saleTimestamp - purchaseData.timestamp;
+            if (holdTimeMs > 0) {
+              const holdTimeMinutes = Math.floor(holdTimeMs / (1000 * 60));
+              const holdTimeHours = Math.floor(holdTimeMs / (1000 * 60 * 60));
+              const holdTimeDays = Math.floor(holdTimeMs / (1000 * 60 * 60 * 24));
+              
+              if (holdTimeMinutes < 60) {
+                holdTime = `${holdTimeMinutes}min`;
+              } else if (holdTimeHours < 24) {
+                const hours = Math.floor(holdTimeHours);
+                const minutes = Math.floor(holdTimeMinutes % 60);
+                holdTime = `${hours}h ${minutes}min`;
+              } else {
+                const days = Math.floor(holdTimeDays);
+                if (days === 1) {
+                  holdTime = `${days} day`;
+                } else {
+                  holdTime = `${days} days`;
+                }
+              }
+            }
+          }
+          
+          console.log(`   💰 PnL for ${nftMetadata.name || `#${tx.tokenId}`}: ${pnl > 0 ? '+' : ''}${pnl.toFixed(6)} ETH`);
+          console.log(`   ⏱️ Hold time: ${holdTime}`);
+        }
+      } else {
+        console.log(`   ❌ No purchase data found for this NFT`);
+      }
+    } catch (error) {
+      console.error(`   ❌ Error finding purchase data:`, error.message);
+    }
     
     // Send Discord notification
     await this.sendDiscordNotification({
@@ -361,7 +368,11 @@ class NFTTracker {
       floorPrice: floorPrice,
       buyPrice: purchaseData?.price || 0,
       buyPriceUSD: purchaseData?.priceUSD || 0,
-      buyTimestamp: purchaseData?.timestamp || null
+      buyTimestamp: purchaseData?.timestamp || null,
+      pnl: pnl,
+      pnlUSD: pnlUSD,
+      holdTime: holdTime,
+      royaltiesInfo: royaltiesInfo
     });
   }
 
@@ -410,25 +421,24 @@ class NFTTracker {
 
   async getTransactionData(txHash, chainName) {
     try {
-      const apiKey = config.etherscan.apiKey;
+      const apiKey = config.opensea.apiKey;
       
-      // Map chain names to their respective API endpoints
-      const chainApis = {
-        'Ethereum': 'https://api.etherscan.io',
-        'Base': 'https://api.basescan.org',
-        'Polygon': 'https://api.polygonscan.com',
-        'Arbitrum': 'https://api.arbiscan.io',
-        'Optimism': 'https://api-optimistic.etherscan.io',
-        'BSC': 'https://api.bscscan.com',
-        'Avalanche': 'https://api.snowtrace.io',
-        'Berachain': 'https://api.berascan.com',
-        'Abstract': 'https://api.abstract.money'
+      // Map chain names to OpenSea chain identifiers
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
       };
       
-      const baseUrl = chainApis[chainName];
+      const chain = chainMap[chainName];
       
-      if (!baseUrl) {
-        console.log(`⚠️ No API endpoint configured for ${chainName}`);
+      if (!chain) {
+        console.log(`⚠️ No OpenSea chain mapping for ${chainName}`);
         return {
           price: 0,
           priceUSD: 0,
@@ -437,28 +447,45 @@ class NFTTracker {
         };
       }
       
-      // Get transaction details
-      const response = await fetch(`${baseUrl}/api?module=proxy&action=eth_getTransactionByHash&txhash=${txHash}&apikey=${apiKey}`);
-      const data = await response.json();
+      console.log(`🔍 Fetching transaction data for ${txHash} on ${chainName} via OpenSea API V2...`);
       
-      if (data.result) {
-        const tx = data.result;
-        const priceInWei = tx.value;
-        // Convert hex string to BigInt, then to ETH
-        const priceInEth = priceInWei ? Number(BigInt(priceInWei)) / Math.pow(10, 18) : 0;
-        
-        // Get native token price in USD
-        const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
-        const priceUSD = priceInEth * nativePriceUSD;
-        
-        return {
-          price: priceInEth,
-          priceUSD: priceUSD,
-          gasUsed: 0, // Would need separate call to get gas info
-          gasPrice: 0
-        };
+      // Use OpenSea API V2 to get transaction details
+      const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${chain}/transaction/${txHash}`, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.asset_events && data.asset_events.length > 0) {
+          // Find the main transfer event
+          const transferEvent = data.asset_events.find(event => 
+            event.event_type === 'item_transferred' || 
+            event.event_type === 'item_sold'
+          );
+          
+          if (transferEvent) {
+            const price = transferEvent.payment?.amount ? 
+              Number(transferEvent.payment.amount) / Math.pow(10, transferEvent.payment.decimals || 18) : 0;
+            const priceUSD = transferEvent.payment?.usd_amount || 0;
+            
+            console.log(`✅ Found transaction data: ${price} ETH ($${priceUSD})`);
+            
+            return {
+              price: price,
+              priceUSD: priceUSD,
+              gasUsed: 0, // OpenSea API V2 doesn't provide gas info
+              gasPrice: 0
+            };
+          }
+        }
+      } else {
+        console.log(`⚠️ OpenSea API V2 returned status ${response.status}`);
       }
       
+      // Fallback: return default values
       return {
         price: 0,
         priceUSD: 0,
@@ -466,7 +493,7 @@ class NFTTracker {
         gasPrice: 0
       };
     } catch (error) {
-      console.error('Error getting transaction data:', error.message);
+      console.error('Error getting transaction data via OpenSea API V2:', error.message);
       return {
         price: 0,
         priceUSD: 0,
@@ -478,64 +505,58 @@ class NFTTracker {
 
   async getNFTMetadata(contractAddress, tokenId, chainName) {
     try {
-      // Handle null tokenId
-      if (!tokenId) {
-        console.log(`⚠️  Token ID is null for contract ${contractAddress}`);
-        return {
-          imageUrl: null,
-          name: 'Unknown NFT',
-          description: null
-        };
-      }
-
-      // Try OpenSea API for metadata
-      try {
-        const apiKey = config.opensea.apiKey;
-        const chainMap = {
-          'Ethereum': 'ethereum',
-          'Base': 'base',
-          'Polygon': 'polygon',
-          'Arbitrum': 'arbitrum',
-          'Optimism': 'optimism',
-          'BSC': 'bsc',
-          'Berachain': 'berachain',
-          'Abstract': 'abstract'
-        };
-        
-        const chain = chainMap[chainName] || 'ethereum';
-        
-        const response = await fetch(`https://api.opensea.io/api/v1/asset/${contractAddress}/${tokenId}/?chain=${chain}`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
+      const apiKey = config.opensea.apiKey;
+      
+      // Map chain names to OpenSea chain identifiers
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
+      };
+      
+      const chain = chainMap[chainName] || 'ethereum';
+      
+      console.log(`🔍 Fetching NFT metadata for ${contractAddress} #${tokenId} on ${chainName}...`);
+      
+      // Use OpenSea API V2 for better compatibility and future-proofing
+      const response = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}`, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.nfts && data.nfts.length > 0) {
+          const nft = data.nfts[0];
+          console.log(`✅ OpenSea API V2: Found NFT metadata for ${contractAddress} #${tokenId}`);
           return {
-            imageUrl: data.image_url || data.image_thumbnail_url || null,
-            name: data.name || `#${tokenId}`,
-            description: data.description || null
+            name: nft.name || `#${tokenId}`,
+            image_url: nft.image_url,
+            description: nft.description,
+            collection: nft.collection,
+            attributes: nft.traits || [],
+            external_url: nft.external_url,
+            animation_url: nft.animation_url,
+            background_color: nft.background_color,
+            token_id: nft.identifier,
+            contract_address: nft.contract
           };
         }
-      } catch (openseaError) {
-        console.log('OpenSea API failed for metadata, using fallback...');
       }
       
-      // Fallback to basic info
-      return {
-        imageUrl: null,
-        name: tokenId ? `#${tokenId}` : 'Unknown NFT',
-        description: null
-      };
+      console.log(`❌ No NFT metadata found for ${contractAddress} #${tokenId} on ${chainName}`);
+      return null;
+      
     } catch (error) {
-      console.error('Error getting NFT metadata:', error.message);
-      return {
-        imageUrl: null,
-        name: tokenId ? `#${tokenId}` : 'Unknown NFT',
-        description: null
-      };
+      console.error('Error fetching NFT metadata:', error.message);
+      return null;
     }
   }
 
@@ -660,7 +681,7 @@ class NFTTracker {
 
   async getCollectionInfoBySlug(slug, chainName) {
     try {
-      const apiKey = config.opensea.apiKey;
+      const apiKey = this.config.opensea.apiKey;
       
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
@@ -716,6 +737,13 @@ class NFTTracker {
           console.log(`⚠️ Stats not available: ${statsResponse.status} ${statsResponse.statusText}`);
         }
         
+        // Add delay before fetching royalties to avoid rate limiting
+        await this.sleep(200);
+        
+        // Fetch royalties information
+        console.log(`🔍 Fetching royalties info for slug: ${slug}`);
+        const royaltiesInfo = await this.getCollectionRoyalties(slug, chainName);
+        
         return {
           name: collectionData.name || slug,
           slug: slug,
@@ -750,7 +778,9 @@ class NFTTracker {
           thirty_day_volume: statsData?.intervals?.find(i => i.interval === 'thirty_day')?.volume,
           one_day_sales: statsData?.intervals?.find(i => i.interval === 'one_day')?.sales,
           seven_day_sales: statsData?.intervals?.find(i => i.interval === 'seven_day')?.sales,
-          thirty_day_sales: statsData?.intervals?.find(i => i.interval === 'thirty_day')?.sales
+          thirty_day_sales: statsData?.intervals?.find(i => i.interval === 'thirty_day')?.sales,
+          // Add royalties data
+          royalties: royaltiesInfo
         };
       } else {
         console.log(`❌ Collection not found for slug: ${slug} (${collectionResponse.status} ${collectionResponse.statusText})`);
@@ -758,6 +788,120 @@ class NFTTracker {
       }
     } catch (error) {
       console.error('Error fetching collection info by slug:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get collection royalties information from OpenSea API v2
+   */
+  async getCollectionRoyalties(slug, chainName) {
+    try {
+      const apiKey = this.config.opensea.apiKey;
+      
+      // Map chain names to OpenSea chain identifiers
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
+      };
+      
+      const chain = chainMap[chainName] || 'ethereum';
+      
+      // Try to get royalties from collection details endpoint
+      const royaltiesResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}&include_hidden=true`, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (royaltiesResponse.ok) {
+        const royaltiesData = await royaltiesResponse.json();
+        
+        // Extract royalties information
+        const royalties = {
+          percentage: null,
+          is_enforced: false,
+          is_optional: false
+        };
+        
+        // Check for royalties in various possible fields
+        if (royaltiesData.royalties && Array.isArray(royaltiesData.royalties)) {
+          // Find the highest royalty percentage (including 0%)
+          let highestRoyalty = null;
+          for (const royalty of royaltiesData.royalties) {
+            if (royalty.percentage !== null && royalty.percentage !== undefined) {
+              if (highestRoyalty === null || royalty.percentage > highestRoyalty) {
+                highestRoyalty = royalty.percentage;
+              }
+            }
+          }
+          
+                  // Set royalties percentage (even if it's 0%)
+        if (highestRoyalty !== null) {
+          royalties.percentage = highestRoyalty;
+        } else {
+          // If no royalties found in API, assume 0% instead of null
+          royalties.percentage = 0;
+        }
+        }
+        
+        // Alternative: check for royalties in collection stats or other fields
+        if (!royalties.percentage && royaltiesData.stats && royaltiesData.stats.royalties) {
+          royalties.percentage = royaltiesData.stats.royalties;
+        }
+        
+        // Check for royalties in collection metadata
+        if (!royalties.percentage && royaltiesData.metadata && royaltiesData.metadata.royalties) {
+          royalties.percentage = royaltiesData.metadata.royalties;
+        }
+        
+        // Check for royalties in collection settings
+        if (!royalties.percentage && royaltiesData.settings && royaltiesData.settings.royalties) {
+          royalties.percentage = royaltiesData.settings.royalties;
+        }
+        
+        // Try to get royalties from contract data
+        if (!royalties.percentage && royaltiesData.contracts && Array.isArray(royaltiesData.contracts)) {
+          for (const contract of royaltiesData.contracts) {
+            if (contract.royalties && contract.royalties > 0) {
+              royalties.percentage = contract.royalties;
+              break;
+            }
+          }
+        }
+        
+        // Check if royalties are enforced (usually indicated by contract-level enforcement)
+        if (royaltiesData.contracts && Array.isArray(royaltiesData.contracts)) {
+          // Look for any contract that might indicate enforced royalties
+          royalties.is_enforced = royaltiesData.contracts.some(contract => 
+            contract.royalties_enforced === true || 
+            contract.royalties_enforced === 'true' ||
+            contract.royalties_enforced === 1
+          );
+        }
+        
+        // If not enforced, mark as optional
+        if (!royalties.is_enforced) {
+          royalties.is_optional = true;
+        }
+        
+
+        
+        console.log(`✅ Royalties info: ${royalties.percentage}% (${royalties.is_enforced ? 'enforced' : 'optional'})`);
+        return royalties;
+      } else {
+        console.log(`⚠️ Could not fetch royalties info: ${royaltiesResponse.status} ${royaltiesResponse.statusText}`);
+        return null;
+      }
+    } catch (error) {
+      console.log(`⚠️ Error fetching royalties info: ${error.message}`);
       return null;
     }
   }
@@ -793,30 +937,65 @@ class NFTTracker {
         }
       }
       
-      // Strategy 2: Get collection info (which now includes floor price from slug approach)
-      console.log(`🔍 Strategy 2: Getting collection info with floor price...`);
-      const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
-      
-      if (collectionInfo && collectionInfo.floor_price) {
-        console.log(`✅ Found floor price from collection info: ${collectionInfo.floor_price} ETH`);
-        return collectionInfo.floor_price;
+      // Strategy 2: Try OpenSea API v2 with collection slug
+      if (collectionSlug) {
+        console.log(`🔍 Strategy 2: Trying OpenSea API v2 with collection slug...`);
+        try {
+          const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${collectionSlug}/stats?chain=${chain}`, {
+            headers: {
+              'X-API-KEY': apiKey,
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (v2Response.ok) {
+            const v2Data = await v2Response.json();
+            if (v2Data.total && Number.isFinite(v2Data.total.floor_price) && v2Data.total.floor_price > 0) {
+              console.log(`✅ OpenSea API v2: Found floor price for ${collectionSlug}: ${v2Data.total.floor_price} ETH`);
+              return v2Data.total.floor_price;
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️ OpenSea API v2 strategy failed: ${error.message}`);
+        }
       }
       
-      // Strategy 3: Try OpenSea API v1 as fallback
-      console.log(`🔍 Strategy 3: Trying OpenSea API v1 stats...`);
-      const v1Response = await fetch(`https://api.opensea.io/api/v1/collection/${contractAddress}/stats?chain=${chain}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
+      // Strategy 3: Try OpenSea API v2 with contract address directly
+      console.log(`🔍 Strategy 3: Trying OpenSea API v2 with contract address...`);
+      try {
+        // First try to get collection info to find the slug
+        const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
+        if (collectionInfo && collectionInfo.slug) {
+          const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${collectionInfo.slug}/stats?chain=${chain}`, {
+            headers: {
+              'X-API-KEY': apiKey,
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (v2Response.ok) {
+            const v2Data = await v2Response.json();
+            if (v2Data.total) {
+              console.log(`✅ OpenSea API v2: Found collection stats via collection info`);
+              return {
+                floor_price: v2Data.total.floor_price,
+                total_volume: v2Data.total.volume,
+                total_sales: v2Data.total.sales,
+                num_owners: v2Data.total.num_owners,
+                average_price: v2Data.total.average_price,
+                // Interval stats
+                one_day_volume: v2Data.intervals?.find(i => i.interval === 'one_day')?.volume,
+                seven_day_volume: v2Data.intervals?.find(i => i.interval === 'seven_day')?.volume,
+                thirty_day_volume: v2Data.intervals?.find(i => i.interval === 'thirty_day')?.volume,
+                one_day_sales: v2Data.intervals?.find(i => i.interval === 'one_day')?.sales,
+                seven_day_sales: v2Data.intervals?.find(i => i.interval === 'seven_day')?.sales,
+                thirty_day_sales: v2Data.intervals?.find(i => i.interval === 'thirty_day')?.sales
+              };
+            }
+          }
         }
-      });
-      
-      if (v1Response.ok) {
-        const v1Data = await v1Response.json();
-        if (v1Data.stats && v1Data.stats.floor_price) {
-          console.log(`✅ OpenSea API v1: Found floor price for ${contractAddress}: ${v1Data.stats.floor_price} ETH`);
-          return v1Data.stats.floor_price;
-        }
+      } catch (error) {
+        console.log(`⚠️ OpenSea API v2 contract strategy failed: ${error.message}`);
       }
       
       // Strategy 4: Try to estimate floor price from recent sales
@@ -839,78 +1018,7 @@ class NFTTracker {
     try {
       const apiKey = config.opensea.apiKey;
       
-      // First, get collection info to find the slug
-      const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
-      
-      if (collectionInfo && collectionInfo.slug) {
-        console.log(`🔍 Fetching stats using slug: ${collectionInfo.slug}`);
-        
-        // Try OpenSea API v2 stats endpoint
-        const chainMap = {
-          'Ethereum': 'ethereum',
-          'Base': 'base',
-          'Polygon': 'polygon',
-          'Arbitrum': 'arbitrum',
-          'Optimism': 'optimism',
-          'BSC': 'bsc',
-          'Berachain': 'berachain',
-          'Abstract': 'abstract'
-        };
-        
-        const chain = chainMap[chainName] || 'ethereum';
-        
-        const v2StatsResponse = await fetch(`https://api.opensea.io/api/v2/collections/${collectionInfo.slug}/stats?chain=${chain}`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (v2StatsResponse.ok) {
-          const v2StatsData = await v2StatsResponse.json();
-          console.log(`✅ OpenSea API v2: Found collection stats for ${collectionInfo.slug}`);
-          
-          // OpenSea API v2 has different structure
-          const stats = {
-            floor_price: v2StatsData.total?.floor_price,
-            total_volume: v2StatsData.total?.volume,
-            total_sales: v2StatsData.total?.sales,
-            num_owners: v2StatsData.total?.num_owners,
-            average_price: v2StatsData.total?.average_price,
-            market_cap: v2StatsData.total?.market_cap,
-            // Volume data from intervals
-            one_day_volume: v2StatsData.intervals?.find(i => i.interval === 'one_day')?.volume,
-            seven_day_volume: v2StatsData.intervals?.find(i => i.interval === 'seven_day')?.volume,
-            thirty_day_volume: v2StatsData.intervals?.find(i => i.interval === 'thirty_day')?.volume,
-            // Sales data from intervals
-            one_day_sales: v2StatsData.intervals?.find(i => i.interval === 'one_day')?.sales,
-            seven_day_sales: v2StatsData.intervals?.find(i => i.interval === 'seven_day')?.sales,
-            thirty_day_sales: v2StatsData.intervals?.find(i => i.interval === 'thirty_day')?.sales,
-            // Volume change data from intervals
-            one_day_volume_change: v2StatsData.intervals?.find(i => i.interval === 'one_day')?.volume_change,
-            seven_day_volume_change: v2StatsData.intervals?.find(i => i.interval === 'seven_day')?.volume_change,
-            thirty_day_volume_change: v2StatsData.intervals?.find(i => i.interval === 'thirty_day')?.volume_change,
-            // Volume diff data from intervals
-            one_day_volume_diff: v2StatsData.intervals?.find(i => i.interval === 'one_day')?.volume_diff,
-            seven_day_volume_diff: v2StatsData.intervals?.find(i => i.interval === 'seven_day')?.volume_diff,
-            thirty_day_volume_diff: v2StatsData.intervals?.find(i => i.interval === 'thirty_day')?.volume_diff
-          };
-          
-          // Calculate floor price changes if we have historical data
-          const floorPriceChanges = await this.calculateFloorPriceChanges(contractAddress, chainName, stats.floor_price);
-          if (floorPriceChanges) {
-            stats.floor_price_change_24h = floorPriceChanges.change24h;
-            stats.floor_price_change_7d = floorPriceChanges.change7d;
-            stats.floor_price_change_30d = floorPriceChanges.change30d;
-          }
-          
-          return stats;
-        } else {
-          console.log(`❌ v2 stats API failed: ${v2StatsResponse.status} ${v2StatsResponse.statusText}`);
-        }
-      }
-      
-      // Fallback to OpenSea API v1
+      // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
         'Base': 'base',
@@ -924,18 +1032,40 @@ class NFTTracker {
       
       const chain = chainMap[chainName] || 'ethereum';
       
-      const v1Response = await fetch(`https://api.opensea.io/api/v1/collection/${contractAddress}/stats?chain=${chain}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
-      });
+      console.log(`🔍 Fetching collection stats for ${contractAddress} on ${chainName} via OpenSea API V2...`);
       
-      if (v1Response.ok) {
-        const v1Data = await v1Response.json();
-        if (v1Data.stats) {
-          console.log(`✅ OpenSea API v1: Found collection stats for ${contractAddress}`);
-          return v1Data.stats;
+      // First try to get collection info to find the slug
+      const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
+      if (collectionInfo && collectionInfo.slug) {
+        console.log(`🔍 Using collection slug: ${collectionInfo.slug}`);
+        
+        // Use OpenSea API V2 to get collection stats
+        const response = await fetch(`https://api.opensea.io/api/v2/collections/${collectionInfo.slug}/stats?chain=${chain}`, {
+          headers: {
+            'X-API-KEY': apiKey,
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.total) {
+            console.log(`✅ OpenSea API V2: Found collection stats for ${collectionInfo.slug}`);
+            return {
+              floor_price: data.total.floor_price,
+              total_volume: data.total.volume,
+              total_sales: data.total.sales,
+              num_owners: data.total.num_owners,
+              average_price: data.total.average_price,
+              // Interval stats
+              one_day_volume: data.intervals?.find(i => i.interval === 'one_day')?.volume,
+              seven_day_volume: data.intervals?.find(i => i.interval === 'seven_day')?.volume,
+              thirty_day_volume: data.intervals?.find(i => i.interval === 'thirty_day')?.volume,
+              one_day_sales: data.intervals?.find(i => i.interval === 'one_day')?.sales,
+              seven_day_sales: data.intervals?.find(i => i.interval === 'seven_day')?.sales,
+              thirty_day_sales: data.intervals?.find(i => i.interval === 'thirty_day')?.sales
+            };
+          }
         }
       }
       
@@ -943,6 +1073,64 @@ class NFTTracker {
       return null;
     } catch (error) {
       console.error('Error fetching collection stats:', error.message);
+      return null;
+    }
+  }
+
+  async getCollectionStatsBySlug(slug, chainName) {
+    try {
+      const apiKey = config.opensea.apiKey;
+      
+      // Map chain names to OpenSea chain identifiers
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
+      };
+      
+      const chain = chainMap[chainName] || 'ethereum';
+      
+      console.log(`🔍 Fetching collection stats by slug: ${slug} on ${chainName} via OpenSea API V2...`);
+      
+      // Use OpenSea API V2 to get collection stats directly by slug
+      const response = await fetch(`https://api.opensea.io/api/v2/collections/${slug}/stats?chain=${chain}`, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.total) {
+          console.log(`✅ OpenSea API V2: Found collection stats for ${slug}`);
+          return {
+            floor_price: data.total.floor_price,
+            total_volume: data.total.volume,
+            total_sales: data.total.sales,
+            num_owners: data.total.num_owners,
+            average_price: data.total.average_price,
+            total_supply: data.total.supply,
+            // Interval stats
+            one_day_volume: data.intervals?.find(i => i.interval === 'one_day')?.volume,
+            seven_day_volume: data.intervals?.find(i => i.interval === 'seven_day')?.volume,
+            thirty_day_volume: data.intervals?.find(i => i.interval === 'thirty_day')?.volume,
+            one_day_sales: data.intervals?.find(i => i.interval === 'one_day')?.sales,
+            seven_day_sales: data.intervals?.find(i => i.interval === 'seven_day')?.sales,
+            thirty_day_sales: data.intervals?.find(i => i.interval === 'thirty_day')?.sales
+          };
+        }
+      }
+      
+      console.log(`❌ No collection stats found for slug: ${slug}`);
+      return null;
+    } catch (error) {
+      console.error('Error fetching collection stats by slug:', error.message);
       return null;
     }
   }
@@ -965,30 +1153,10 @@ class NFTTracker {
       
       const chain = chainMap[chainName] || 'ethereum';
       
-      console.log(`🔍 Fetching collection info for ${contractAddress} on ${chainName}...`);
+      console.log(`🔍 Fetching collection info for ${contractAddress} on ${chainName} via OpenSea API V2...`);
       
-      // Strategy 1: Try OpenSea API v1 first (more reliable for Base chain)
-      console.log(`🔍 Strategy 1: Trying OpenSea API v1...`);
-      const v1Response = await fetch(`https://api.opensea.io/api/v1/collection/${contractAddress}?chain=${chain}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (v1Response.ok) {
-        const v1Data = await v1Response.json();
-        if (v1Data.collection) {
-          console.log(`✅ OpenSea API v1: Found collection info for ${contractAddress}`);
-          console.log(`📊 Collection name: ${v1Data.collection.name}`);
-          console.log(`🔗 Twitter: ${v1Data.collection.twitter_username || 'N/A'}`);
-          console.log(`📱 Discord: ${v1Data.collection.discord_url || 'N/A'}`);
-          return v1Data.collection;
-        }
-      }
-      
-      // Strategy 2: Get collection name from NFT metadata and fetch data using slug
-      console.log(`🔍 Strategy 2: Getting collection data using slug approach...`);
+      // Strategy 1: Try OpenSea API V2 with contract address directly
+      console.log(`🔍 Strategy 1: Trying OpenSea API V2 with contract address...`);
       try {
         // First, get collection name from NFT metadata
         const nftResponse = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/1`, {
@@ -1018,332 +1186,6 @@ class NFTTracker {
                 // Add delay to avoid rate limiting
                 await this.sleep(100);
                 
-                // Fetch collection info using slug
-                const collectionResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}`, {
-                  headers: {
-                    'X-API-KEY': apiKey,
-                    'Accept': 'application/json'
-                  }
-                });
-                
-                if (collectionResponse.ok) {
-                  const collectionData = await collectionResponse.json();
-                  
-                  // Check if this collection has our contract address
-                  const hasContract = collectionData.contracts?.some(contract => 
-                    contract.address.toLowerCase() === contractAddress.toLowerCase()
-                  );
-                  
-                  if (hasContract) {
-                    console.log(`✅ Found matching collection with slug: ${slug}`);
-                    console.log(`📊 Collection name: ${collectionData.name || slug}`);
-                    console.log(`🔗 Twitter: ${collectionData.twitter_username || 'N/A'}`);
-                    console.log(`📱 Discord: ${collectionData.discord_url || 'N/A'}`);
-                    console.log(`🌐 Website: ${collectionData.project_url || 'N/A'}`);
-                    
-                    // Add delay before fetching stats to avoid rate limiting
-                    await this.sleep(200);
-                    
-                    // Fetch collection stats using the same slug
-                    console.log(`🔍 Fetching stats for slug: ${slug}`);
-                    const statsResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}/stats?chain=${chain}`, {
-                      headers: {
-                        'X-API-KEY': apiKey,
-                        'Accept': 'application/json'
-                      }
-                    });
-                    
-                    let statsData = null;
-                    if (statsResponse.ok) {
-                      statsData = await statsResponse.json();
-                      console.log(`✅ Stats found - Floor: ${statsData.total?.floor_price || 'N/A'} ETH, Volume: ${statsData.total?.volume || 'N/A'} ETH`);
-                    } else if (statsResponse.status === 429) {
-                      console.log(`⚠️ Rate limited on stats API, skipping stats for now`);
-                    } else {
-                      console.log(`⚠️ Stats not available: ${statsResponse.status} ${statsResponse.statusText}`);
-                    }
-                    
-                    return {
-                      name: collectionData.name || slug,
-                      slug: slug,
-                      twitter_username: collectionData.twitter_username,
-                      discord_url: collectionData.discord_url,
-                      external_url: collectionData.project_url || collectionData.external_url,
-                      image_url: collectionData.image_url,
-                      description: collectionData.description,
-                      opensea_url: collectionData.opensea_url || `https://opensea.io/collection/${slug}`,
-                      project_url: collectionData.project_url,
-                      banner_image_url: collectionData.banner_image_url,
-                      owner: collectionData.owner,
-                      safelist_status: collectionData.safelist_status,
-                      category: collectionData.category,
-                      is_disabled: collectionData.is_disabled,
-                      is_nsfw: collectionData.is_nsfw,
-                      trait_offers_enabled: collectionData.trait_offers_enabled,
-                      collection_offers_enabled: collectionData.collection_offers_enabled,
-                      wiki_url: collectionData.wiki_url,
-                      telegram_url: collectionData.telegram_url,
-                      instagram_username: collectionData.instagram_username,
-                      contracts: collectionData.contracts,
-                      // Add stats data
-                      floor_price: statsData?.total?.floor_price,
-                      total_volume: statsData?.total?.volume,
-                      total_sales: statsData?.total?.sales,
-                      num_owners: statsData?.total?.num_owners,
-                      average_price: statsData?.total?.average_price,
-                      // Interval stats
-                      one_day_volume: statsData?.intervals?.find(i => i.interval === 'one_day')?.volume,
-                      seven_day_volume: statsData?.intervals?.find(i => i.interval === 'seven_day')?.volume,
-                      thirty_day_volume: statsData?.intervals?.find(i => i.interval === 'thirty_day')?.volume,
-                      one_day_sales: statsData?.intervals?.find(i => i.interval === 'one_day')?.sales,
-                      seven_day_sales: statsData?.intervals?.find(i => i.interval === 'seven_day')?.sales,
-                      thirty_day_sales: statsData?.intervals?.find(i => i.interval === 'thirty_day')?.sales
-                    };
-                  }
-                } else if (collectionResponse.status === 429) {
-                  console.log(`⚠️ Rate limited on collection API for slug ${slug}, trying next slug...`);
-                  await this.sleep(500); // Longer delay for rate limiting
-                  continue;
-                }
-              } catch (error) {
-                console.log(`⚠️ Slug test failed for ${slug}: ${error.message}`);
-                continue;
-              }
-            }
-            
-            console.log(`⚠️ No matching collection found for any generated slug`);
-          } else {
-            console.log(`⚠️ No NFT data found for contract ${contractAddress}`);
-          }
-        } else {
-          console.log(`⚠️ NFT metadata API failed: ${nftResponse.status} ${nftResponse.statusText}`);
-        }
-      } catch (error) {
-        console.log(`⚠️ NFT metadata strategy failed: ${error.message}`);
-      }
-      
-      // Strategy 3: Try OpenSea API v2 with contract address (only if previous strategies failed)
-      console.log(`🔍 Strategy 3: Trying OpenSea API v2 with contract address...`);
-      try {
-        const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${contractAddress}?chain=${chain}`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (v2Response.ok) {
-          const v2Data = await v2Response.json();
-          
-          let collectionData = v2Data;
-          
-          // Try different possible structures
-          if (v2Data.collections && v2Data.collections.length > 0) {
-            collectionData = v2Data.collections[0];
-          } else if (v2Data.nft) {
-            collectionData = v2Data.nft;
-          } else if (v2Data.collection) {
-            collectionData = v2Data;
-          }
-          
-          const collectionName = collectionData.name || collectionData.collection || 'Unknown Collection';
-          
-          // Check if we got meaningful data (not just contract address as name)
-          const hasMeaningfulData = collectionName && 
-            collectionName !== contractAddress && 
-            (collectionData.twitter_username || collectionData.discord_url || collectionData.project_url);
-          
-          if (hasMeaningfulData) {
-            console.log(`✅ OpenSea API v2: Found meaningful collection info for ${contractAddress}`);
-            console.log(`📊 Collection name: ${collectionName}`);
-            console.log(`🔗 Twitter: ${collectionData.twitter_username || 'N/A'}`);
-            console.log(`📱 Discord: ${collectionData.discord_url || 'N/A'}`);
-            
-            return {
-              name: collectionName,
-              slug: collectionData.collection || collectionData.slug || contractAddress,
-              twitter_username: collectionData.twitter_username,
-              discord_url: collectionData.discord_url,
-              external_url: collectionData.project_url || collectionData.external_url,
-              image_url: collectionData.image_url,
-              description: collectionData.description,
-              opensea_url: collectionData.opensea_url || `https://opensea.io/collection/${collectionData.collection || contractAddress}`,
-              project_url: collectionData.project_url,
-              banner_image_url: collectionData.banner_image_url,
-              owner: collectionData.owner,
-              safelist_status: collectionData.safelist_status,
-              category: collectionData.category,
-              is_disabled: collectionData.is_disabled,
-              is_nsfw: collectionData.is_nsfw,
-              trait_offers_enabled: collectionData.trait_offers_enabled,
-              collection_offers_enabled: collectionData.collection_offers_enabled,
-              wiki_url: collectionData.wiki_url,
-              telegram_url: collectionData.telegram_url,
-              instagram_username: collectionData.instagram_username,
-              contracts: collectionData.contracts
-            };
-          } else {
-            console.log(`⚠️ OpenSea API v2 returned minimal data (contract as name), continuing to next strategy...`);
-          }
-        }
-      } catch (error) {
-        console.log(`⚠️ OpenSea API v2 strategy failed: ${error.message}`);
-      }
-      
-      // Strategy 4: For Base chain, try to find collection by searching all collections
-      if (chainName === 'Base') {
-        console.log(`🔍 Strategy 4: Searching all Base collections for contract ${contractAddress}...`);
-        
-        // Try different search strategies
-        const searchStrategies = [
-          // Search by contract address
-          `https://api.opensea.io/api/v2/collections?chain=${chain}&limit=100`,
-          // Search with different parameters
-          `https://api.opensea.io/api/v2/collections?chain=${chain}&limit=200`,
-          // Try without limit
-          `https://api.opensea.io/api/v2/collections?chain=${chain}`
-        ];
-        
-        for (const searchUrl of searchStrategies) {
-          try {
-            const searchResponse = await fetch(searchUrl, {
-              headers: {
-                'X-API-KEY': apiKey,
-                'Accept': 'application/json'
-              }
-            });
-            
-            if (searchResponse.ok) {
-              const searchData = await searchResponse.json();
-              const collection = searchData.collections?.find(col => 
-                col.contracts?.some(contract => contract.address.toLowerCase() === contractAddress.toLowerCase())
-              );
-              
-              if (collection) {
-                console.log(`🔍 Found collection slug: ${collection.collection} for contract ${contractAddress}`);
-                
-                // Now fetch detailed info using the slug
-                const detailedResponse = await fetch(`https://api.opensea.io/api/v2/collections/${collection.collection}?chain=${chain}`, {
-                  headers: {
-                    'X-API-KEY': apiKey,
-                    'Accept': 'application/json'
-                  }
-                });
-                
-                if (detailedResponse.ok) {
-                  const detailedData = await detailedResponse.json();
-                  console.log(`✅ Found detailed collection info via slug search`);
-                  
-                  const collectionName = detailedData.name || collection.collection || 'Unknown Collection';
-                  console.log(`📊 Collection name: ${collectionName}`);
-                  console.log(`🔗 Twitter: ${detailedData.twitter_username || 'N/A'}`);
-                  console.log(`📱 Discord: ${detailedData.discord_url || 'N/A'}`);
-                  
-                  return {
-                    name: collectionName,
-                    slug: collection.collection,
-                    twitter_username: detailedData.twitter_username,
-                    discord_url: detailedData.discord_url,
-                    external_url: detailedData.project_url || detailedData.external_url,
-                    image_url: detailedData.image_url,
-                    description: detailedData.description,
-                    opensea_url: detailedData.opensea_url || `https://opensea.io/collection/${collection.collection}`,
-                    project_url: detailedData.project_url,
-                    banner_image_url: detailedData.banner_image_url,
-                    owner: detailedData.owner,
-                    safelist_status: detailedData.safelist_status,
-                    category: detailedData.category,
-                    is_disabled: detailedData.is_disabled,
-                    is_nsfw: detailedData.is_nsfw,
-                    trait_offers_enabled: detailedData.trait_offers_enabled,
-                    collection_offers_enabled: detailedData.collection_offers_enabled,
-                    wiki_url: detailedData.wiki_url,
-                    telegram_url: detailedData.telegram_url,
-                    instagram_username: detailedData.instagram_username,
-                    contracts: detailedData.contracts
-                  };
-                }
-              }
-            }
-          } catch (error) {
-            console.log(`⚠️ Search strategy failed: ${error.message}`);
-            continue;
-          }
-        }
-      }
-      
-      // Strategy 5: Try to get basic info from NFT metadata
-      console.log(`🔍 Strategy 5: Trying to get basic info from NFT metadata...`);
-      try {
-        const nftResponse = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/1`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (nftResponse.ok) {
-          const nftData = await nftResponse.json();
-          if (nftData.nfts && nftData.nfts.length > 0) {
-            const nft = nftData.nfts[0];
-            console.log(`✅ Found basic collection info from NFT metadata`);
-            
-            return {
-              name: nft.collection || 'Unknown Collection',
-              slug: nft.collection || contractAddress,
-              twitter_username: null,
-              discord_url: null,
-              external_url: null,
-              image_url: nft.image_url,
-              description: nft.description,
-              opensea_url: `https://opensea.io/collection/${nft.collection || contractAddress}`,
-              project_url: null,
-              banner_image_url: null,
-              owner: null,
-              safelist_status: null,
-              category: null,
-              is_disabled: false,
-              is_nsfw: false,
-              trait_offers_enabled: false,
-              collection_offers_enabled: false,
-              wiki_url: null,
-              telegram_url: null,
-              instagram_username: null,
-              contracts: [{ address: contractAddress, chain: chain }]
-            };
-          }
-        }
-      } catch (error) {
-        console.log(`⚠️ NFT metadata strategy failed: ${error.message}`);
-      }
-      
-      // Strategy 5: Try to generate possible slugs from collection name and test them
-      console.log(`🔍 Strategy 5: Trying to generate possible slugs...`);
-      try {
-        // First, try to get collection name from NFT metadata
-        const nftResponse = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/1`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (nftResponse.ok) {
-          const nftData = await nftResponse.json();
-          if (nftData.nfts && nftData.nfts.length > 0) {
-            const nft = nftData.nfts[0];
-            const collectionName = nft.collection || nft.name || 'Unknown';
-            
-            console.log(`🔍 Collection name from NFT: ${collectionName}`);
-            
-            // Generate possible slugs
-            const possibleSlugs = this.generatePossibleSlugs(collectionName);
-            console.log(`🔍 Generated possible slugs: ${possibleSlugs.join(', ')}`);
-            
-            // Test each slug
-            for (const slug of possibleSlugs) {
-              try {
-                console.log(`🔍 Testing slug: ${slug}`);
                 const slugResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}`, {
                   headers: {
                     'X-API-KEY': apiKey,
@@ -1353,57 +1195,29 @@ class NFTTracker {
                 
                 if (slugResponse.ok) {
                   const slugData = await slugResponse.json();
-                  
-                  // Check if this collection has our contract address
-                  const hasContract = slugData.contracts?.some(contract => 
-                    contract.address.toLowerCase() === contractAddress.toLowerCase()
-                  );
-                  
-                  if (hasContract) {
-                    console.log(`✅ Found matching collection with slug: ${slug}`);
-                    console.log(`📊 Collection name: ${slugData.name || slug}`);
-                    console.log(`🔗 Twitter: ${slugData.twitter_username || 'N/A'}`);
-                    console.log(`📱 Discord: ${slugData.discord_url || 'N/A'}`);
+                  if (slugData.collection) {
+                    console.log(`✅ OpenSea API V2: Found collection info for slug: ${slug}`);
+                    console.log(`📊 Collection name: ${slugData.collection.name}`);
+                    console.log(`🔗 Twitter: ${slugData.collection.twitter_username || 'N/A'}`);
+                    console.log(`📱 Discord: ${slugData.collection.discord_url || 'N/A'}`);
                     
-                    return {
-                      name: slugData.name || slug,
-                      slug: slug,
-                      twitter_username: slugData.twitter_username,
-                      discord_url: slugData.discord_url,
-                      external_url: slugData.project_url || slugData.external_url,
-                      image_url: slugData.image_url,
-                      description: slugData.description,
-                      opensea_url: slugData.opensea_url || `https://opensea.io/collection/${slug}`,
-                      project_url: slugData.project_url,
-                      banner_image_url: slugData.banner_image_url,
-                      owner: slugData.owner,
-                      safelist_status: slugData.safelist_status,
-                      category: slugData.category,
-                      is_disabled: slugData.is_disabled,
-                      is_nsfw: slugData.is_nsfw,
-                      trait_offers_enabled: slugData.trait_offers_enabled,
-                      collection_offers_enabled: slugData.collection_offers_enabled,
-                      wiki_url: slugData.wiki_url,
-                      telegram_url: slugData.telegram_url,
-                      instagram_username: slugData.instagram_username,
-                      contracts: slugData.contracts
-                    };
+                    // Add slug to the collection data for future use
+                    slugData.collection.slug = slug;
+                    return slugData.collection;
                   }
                 }
               } catch (error) {
-                console.log(`⚠️ Slug test failed for ${slug}: ${error.message}`);
+                console.log(`⚠️ Error testing slug ${slug}: ${error.message}`);
                 continue;
               }
             }
           }
         }
       } catch (error) {
-        console.log(`⚠️ Slug generation strategy failed: ${error.message}`);
+        console.log(`⚠️ OpenSea API V2 strategy failed: ${error.message}`);
       }
       
-
-      
-      console.log(`❌ No collection info found for ${contractAddress} after trying all strategies`);
+      console.log(`❌ No collection info found for ${contractAddress}`);
       return null;
     } catch (error) {
       console.error('Error fetching collection info:', error.message);
@@ -1506,10 +1320,23 @@ class NFTTracker {
               };
 
               console.log(`\n🔗 Grouped ${group.length} events into bulk tx ${txHash} (qty=${totalQty}, paid≈${totalPaid})`);
+              
+              // Determine if this is a bulk sale or bulk purchase based on wallet role
+              const walletAddress = walletInfo.address.toLowerCase();
+              const isBulkSale = base.seller && base.seller.toLowerCase() === walletAddress;
+              const isBulkPurchase = base.buyer && base.buyer.toLowerCase() === walletAddress;
+              
               if (isMintGroup) {
                 await this.handleBulkMintEvent(syntheticEvent, walletInfo);
+              } else if (isBulkSale) {
+                // This is a bulk sale - wallet is selling multiple NFTs
+                await this.handleBulkSaleEvent(syntheticEvent, walletInfo);
+              } else if (isBulkPurchase) {
+                // This is a bulk purchase - wallet is buying multiple NFTs
+                await this.handleBulkPurchaseEvent(syntheticEvent, walletInfo);
               } else {
-                await this.handleBulkEvent(syntheticEvent, walletInfo);
+                // Fallback to old logic
+                await this.handleBulkPurchaseEvent(syntheticEvent, walletInfo);
               }
 
               // Update last processed timestamp from group
@@ -1635,22 +1462,25 @@ class NFTTracker {
 
       // Deduplicate by transaction hash to prevent multiple messages for the same sweep
       if (typeof txHashForDedup === 'string' && txHashForDedup.length > 0) {
-        if (this.processedOpenSeaTxHashes.has(txHashForDedup)) {
+        if (this.processedOpenSeaTxs.has(txHashForDedup)) {
           console.log(`   ⚠️ Skipping already processed tx: ${txHashForDedup}`);
           return;
         }
-        this.processedOpenSeaTxHashes.add(txHashForDedup);
+        this.processedOpenSeaTxs.add(txHashForDedup);
       }
 
       // Decide between single vs. bulk transaction handling
       const isBulk = this.isBulkEvent(event);
       console.log(`   Multiplicity check → isBulk=${isBulk}`);
-      // Bulk handling for PURCHASE and MINT sweeps
+      // Bulk handling for PURCHASE, MINT and SALE sweeps
       if (isBulk && isPurchase) {
         await this.handleBulkEvent(event, walletInfo);
         return;
       } else if (isBulk && isMint) {
         await this.handleBulkMintEvent(event, walletInfo);
+        return;
+      } else if (isBulk && isSale) {
+        await this.handleBulkSaleEvent(event, walletInfo);
         return;
       }
 
@@ -1730,6 +1560,8 @@ class NFTTracker {
       // Floor price z OpenSea - použij slug pokud je dostupný
       const floorPrice = await this.getFloorPrice(nft.contract, chainName, nft.collection);
 
+
+
       // Sestavení transactionData
       const transactionData = {
         type: isMint ? 'mint' : (isPurchase ? 'purchase' : 'sale'),
@@ -1758,106 +1590,77 @@ class NFTTracker {
       console.log(`   📊 Transaction Data: ${transactionData.type} - ${transactionData.nftName} for ${price} ${nativeSymbol}`);
 
       // Pro sale: PnL
-      if (isSale && this.nftPurchases) {
-        // Try to resolve purchase record robustly across potential tokenId formats
-        const purchaseKey = this.resolvePurchaseKey(nft.contract, nft.identifier);
-        console.log(`   🔍 Looking for purchase data with key: ${purchaseKey}`);
-        console.log(`   📊 Available purchase keys:`, Array.from(this.nftPurchases.keys()));
+      if (isSale) {
+        // Always search for purchase data via OpenSea API for real-time accuracy
+        console.log(`🔍 Searching OpenSea API for purchase data for ${nftMetadata.name || `#${nft.identifier}`}...`);
         
-        let purchaseData = purchaseKey ? this.nftPurchases.get(purchaseKey) : undefined;
-        // Recovery: if we have a record but missing price, try to recover from OpenSea events
-        if (purchaseData && (!Number.isFinite(purchaseData.price) || purchaseData.price <= 0)) {
-          console.log('   🛠️ Purchase record found but price is 0; attempting recovery...');
-          try {
-            const recovered = await this.recoverPurchaseData(nft.contract, nft.identifier, walletInfo.address, chainName);
-            if (recovered && Number.isFinite(recovered.price) && recovered.price > 0) {
-              purchaseData.price = recovered.price;
-              purchaseData.priceUSD = recovered.priceUSD || (recovered.price * (await this.getNativeTokenPriceUSD(chainName)));
-              if (!purchaseData.timestamp && recovered.timestamp) {
-                purchaseData.timestamp = recovered.timestamp;
-              }
-              // Persist update under both keys
-              const originalKey = `${nft.contract}_${nft.identifier}`;
-              const stableKey = this.buildStablePurchaseKey(nft.contract, nft.identifier);
-              this.nftPurchases.set(originalKey, purchaseData);
-              if (stableKey) this.nftPurchases.set(stableKey, purchaseData);
-              this.savePurchaseData();
-              console.log('   ✅ Recovered missing buy price from events');
-            }
-          } catch (e) {
-            console.log(`   ⚠️ Recovery failed: ${e.message}`);
-          }
-        }
-        if (purchaseData) {
-          transactionData.buyPrice = purchaseData.price;
-          transactionData.buyPriceUSD = purchaseData.priceUSD;
-          transactionData.buyTimestamp = purchaseData.timestamp;
+        let purchaseData = null;
+        
+        try {
+          // Always search for purchase data via OpenSea API for real-time accuracy
+          console.log(`   🔍 Searching OpenSea API for purchase data...`);
+          purchaseData = await this.recoverPurchaseData(nft.contract, nft.identifier, walletInfo.address, chainName);
           
-          // Calculate hold time
-          const holdTimeMs = transactionData.timestamp.getTime() - purchaseData.timestamp;
-          const holdTimeMinutes = Math.floor(holdTimeMs / (1000 * 60));
-          const holdTimeHours = Math.floor(holdTimeMs / (1000 * 60 * 60));
-          const holdTimeDays = Math.floor(holdTimeMs / (1000 * 60 * 60 * 24));
-          
-          if (holdTimeMinutes < 60) {
-            transactionData.holdTime = `${holdTimeMinutes}min`;
-          } else if (holdTimeHours < 24) {
-            const hours = Math.floor(holdTimeHours);
-            const minutes = Math.floor(holdTimeMinutes % 60);
-            transactionData.holdTime = `${hours}h ${minutes}min`;
-          } else {
-            const days = Math.floor(holdTimeDays);
-            if (days === 1) {
-              transactionData.holdTime = `${days} day`;
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+            console.log(`   ✅ Found purchase data via API: ${purchaseData.price} ETH`);
+            
+            // Calculate PnL and hold time from recovered data
+            const pnl = price - purchaseData.price;
+            const pnlPercent = ((pnl / purchaseData.price) * 100).toFixed(2);
+            const pnlUSD = (priceUSD || 0) - (purchaseData.priceUSD || 0);
+            
+            // Calculate hold time
+            const saleTimestamp = transactionData.timestamp.getTime();
+            const buyTimestamp = purchaseData.timestamp;
+            const holdTimeMs = saleTimestamp - buyTimestamp;
+            
+            let holdTime;
+            if (holdTimeMs < 0) {
+              holdTime = 'Unknown';
             } else {
-              transactionData.holdTime = `${days} days`;
+              const holdTimeMinutes = Math.floor(holdTimeMs / (1000 * 60));
+              const holdTimeHours = Math.floor(holdTimeMs / (1000 * 60 * 60));
+              const holdTimeDays = Math.floor(holdTimeMs / (1000 * 60 * 60 * 24));
+              
+              if (holdTimeMinutes < 60) {
+                holdTime = `${holdTimeMinutes}min`;
+              } else if (holdTimeHours < 24) {
+                const hours = Math.floor(holdTimeHours);
+                const minutes = Math.floor(holdTimeMinutes % 60);
+                holdTime = `${hours}h ${minutes}min`;
+              } else {
+                const days = Math.floor(holdTimeDays);
+                if (days === 1) {
+                  holdTime = `${days} day`;
+                } else {
+                  holdTime = `${days} days`;
+                }
+              }
             }
+            
+            // Store PnL data in transactionData for Discord
+            transactionData.pnl = pnl;
+            transactionData.pnlUSD = pnlUSD;
+            transactionData.pnlPercent = pnlPercent;
+            transactionData.buyPrice = purchaseData.price;
+            transactionData.buyPriceUSD = purchaseData.priceUSD;
+            transactionData.buyTimestamp = purchaseData.timestamp;
+            transactionData.holdTime = holdTime;
+            
+            console.log(`   💰 PnL data recovered: bought for ${purchaseData.price} ${nativeSymbol}, sold for ${price} ${nativeSymbol}`);
+            console.log(`   📈 PnL: ${pnl > 0 ? '+' : ''}${pnl.toFixed(6)} ${nativeSymbol} (${pnlPercent}%)`);
+            console.log(`   ⏱️ Hold time: ${holdTime}`);
+          } else {
+            console.log(`   ❌ No purchase data found via API`);
           }
-          
-          // Calculate PnL
-          const pnl = price - purchaseData.price;
-          const pnlPercent = ((pnl / purchaseData.price) * 100).toFixed(2);
-          
-          // Store PnL data in transactionData for Discord
-          transactionData.pnl = pnl;
-          transactionData.pnlPercent = pnlPercent;
-          transactionData.buyPrice = purchaseData.price;
-          transactionData.buyPriceUSD = purchaseData.priceUSD;
-          transactionData.buyTimestamp = purchaseData.timestamp;
-          
-          console.log(`   💰 PnL data found: bought for ${purchaseData.price} ${nativeSymbol}, sold for ${price} ${nativeSymbol}`);
-          console.log(`   📈 PnL: ${pnl > 0 ? '+' : ''}${pnl.toFixed(6)} ${nativeSymbol} (${pnlPercent}%)`);
-          console.log(`   ⏱️ Hold time: ${transactionData.holdTime}`);
-          
-          // Remove from purchases after sale
-          this.nftPurchases.delete(purchaseKey);
-          
-          // Save updated data to file
-          this.savePurchaseData();
+        } catch (error) {
+          console.error(`   ❌ Error finding purchase data:`, error.message);
         }
       }
 
-      // Pro purchase/mint: uložit pro PnL
-      if ((isPurchase || isMint) && this.nftPurchases) {
-        // Store under both original and stable keys for compatibility across id formats
-        const originalKey = `${nft.contract}_${nft.identifier}`;
-        const stableKey = this.buildStablePurchaseKey(nft.contract, nft.identifier);
-        const record = {
-          price: price,
-          priceUSD: priceUSD,
-          timestamp: typeof event.event_timestamp === 'number'
-            ? event.event_timestamp * 1000 // Store as milliseconds for consistency
-            : new Date(event.event_timestamp).getTime(),
-          walletAddress: walletInfo.address
-        };
-        this.nftPurchases.set(originalKey, record);
-        if (stableKey && stableKey !== originalKey) {
-          this.nftPurchases.set(stableKey, record);
-        }
-        console.log(`   💾 Stored purchase data for future PnL calculation`);
-        
-        // Save to file for persistence
-        this.savePurchaseData();
+      // Pro purchase/mint: neukládat pro PnL - budeme to tahat z OpenSea API
+      if (isPurchase || isMint) {
+        console.log(`   💾 Purchase data will be fetched from OpenSea API when needed for PnL calculation`);
       }
 
       // Odeslat Discord notifikaci
@@ -1917,92 +1720,7 @@ class NFTTracker {
    * Placeholder for bulk transaction processing (Function B).
    * For now, only logs the detection so we can implement behavior next.
    */
-  async handleBulkEvent(event, walletInfo) {
-    console.log(`   📦 Bulk transaction detected for ${walletInfo.name}.`);
-    const txHash = event?.transaction || 'Unknown';
-    const qty = typeof event?.quantity === 'undefined' ? '-' : event.quantity;
-    console.log(`   📦 Tx: ${txHash}, Reported quantity: ${qty}`);
 
-    // Derive chain name
-    const chainName = this.getChainFromOpenSeaChain(event.chain);
-
-    // Aggregate totals
-    const quantity = Number(qty) || (Array.isArray(event?.nfts) ? event.nfts.length : 0) || 0;
-
-    // Try to compute total price
-    let totalPrice = 0;
-    let nativeSymbol = 'ETH';
-    if (event?.payment && event.payment.quantity) {
-      totalPrice = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
-      nativeSymbol = event.payment.symbol || 'ETH';
-    }
-
-    // Collection context (use the first NFT as representative)
-    const representative = Array.isArray(event?.nfts) && event.nfts.length > 0 ? event.nfts[0] : event.nft;
-    const contractAddress = representative?.contract;
-    const tokenName = representative?.collection || representative?.name || 'Unknown';
-
-    // Floor price (best-effort, per collection)
-    let floorPrice = '-';
-    if (contractAddress) {
-      floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
-    }
-
-    // Compute USD conversions for the lot (optional but useful for PnL)
-    let nativeUsd = 0;
-    try {
-      nativeUsd = await this.getNativeTokenPriceUSD(chainName);
-    } catch (e) {
-      nativeUsd = 0;
-    }
-    const totalPriceUSD = nativeUsd && totalPrice ? totalPrice * nativeUsd : undefined;
-    const unitPrice = quantity > 0 ? totalPrice / quantity : 0;
-    const unitPriceUSD = nativeUsd && unitPrice ? unitPrice * nativeUsd : 0;
-
-    // Persist per-item cost basis for PnL/HODL on later sales
-    if (Array.isArray(event?.nfts) && event.nfts.length > 0) {
-      for (const item of event.nfts) {
-        if (item?.contract && item?.identifier) {
-          const purchaseKey = `${item.contract}_${item.identifier}`;
-          this.nftPurchases.set(purchaseKey, {
-            price: unitPrice,
-            priceUSD: unitPriceUSD,
-            timestamp: typeof event.event_timestamp === 'number'
-              ? event.event_timestamp * 1000
-              : new Date(event.event_timestamp || Date.now()).getTime(),
-            walletAddress: walletInfo.address
-          });
-        }
-      }
-      // Save to disk after batch update
-      this.savePurchaseData();
-    }
-
-    const transactionData = {
-      type: 'purchase',
-      isBulk: true,
-      walletName: walletInfo.name,
-      walletAddress: walletInfo.address,
-      tokenName: tokenName,
-      tokenId: representative?.identifier, // not used in title for bulk
-      contractAddress: contractAddress,
-      transactionHash: txHash,
-      chainName: chainName,
-      timestamp: typeof event.event_timestamp === 'number'
-        ? new Date(event.event_timestamp * 1000)
-        : new Date(event.event_timestamp || Date.now()),
-      totalPrice: totalPrice,
-      totalPriceUSD: totalPriceUSD,
-      quantity: quantity,
-      imageUrl: representative?.image_url,
-      nftName: representative?.name,
-      nativeSymbol: nativeSymbol,
-      floorPrice: floorPrice
-    };
-
-    console.log(`   📦 Bulk Transaction Data ready: ${quantity} items, total ${totalPrice} ${nativeSymbol}`);
-    await this.sendDiscordNotification(transactionData, this);
-  }
 
   /**
    * Bulk MINT handling (no role ping). Store per-item cost basis and send one embed.
@@ -2038,6 +1756,16 @@ class NFTTracker {
       floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
     }
 
+    // Get collection royalties info
+    let royaltiesInfo = null;
+    try {
+      if (tokenName) {
+        royaltiesInfo = await this.getCollectionRoyalties(tokenName, chainName);
+      }
+    } catch (error) {
+      console.log(`   ⚠️ Could not fetch royalties info: ${error.message}`);
+    }
+
     // USD conversions
     let nativeUsd = 0;
     try {
@@ -2051,20 +1779,8 @@ class NFTTracker {
 
     // Persist per-item cost basis (often 0 for free mints)
     if (Array.isArray(event?.nfts) && event.nfts.length > 0) {
-      for (const item of event.nfts) {
-        if (item?.contract && item?.identifier) {
-          const purchaseKey = `${item.contract}_${item.identifier}`;
-          this.nftPurchases.set(purchaseKey, {
-            price: unitPrice,
-            priceUSD: unitPriceUSD,
-            timestamp: typeof event.event_timestamp === 'number'
-              ? event.event_timestamp * 1000
-              : new Date(event.event_timestamp || Date.now()).getTime(),
-            walletAddress: walletInfo.address
-          });
-        }
-      }
-      this.savePurchaseData();
+      console.log(`   💾 Purchase data will be fetched from OpenSea API when needed for PnL calculation`);
+      // No need to store in cache - we'll fetch from OpenSea API when needed
     }
 
     const transactionData = {
@@ -2086,7 +1802,8 @@ class NFTTracker {
       imageUrl: representative?.image_url,
       nftName: representative?.name,
       nativeSymbol: nativeSymbol,
-      floorPrice: floorPrice
+      floorPrice: floorPrice,
+      royaltiesInfo: royaltiesInfo
     };
 
     console.log(`   📦 Bulk Mint Data ready: ${quantity} items, total ${totalPrice} ${nativeSymbol}`);
@@ -2239,8 +1956,9 @@ class NFTTracker {
   }
 
   /**
-   * Recover missing purchase record fields (e.g., price) by querying recent OpenSea sale events
+   * Recover missing purchase record fields by querying OpenSea API for historical sale events
    * where the tracked wallet was the buyer of the given contract/tokenId.
+   * Uses the events endpoint as recommended in OpenSea documentation.
    */
   async recoverPurchaseData(contractAddress, tokenId, walletAddress, chainName) {
     try {
@@ -2256,24 +1974,122 @@ class NFTTracker {
         'Abstract': 'abstract'
       };
       const chain = chainMap[chainName] || 'ethereum';
-      const url = `https://api.opensea.io/api/v2/events/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}?event_type=sale&limit=10`;
-      const res = await fetch(url, { headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' } });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const events = Array.isArray(data?.asset_events) ? data.asset_events : [];
-      // Find the most recent event where our wallet was buyer
-      const mine = events.find(e => typeof e?.buyer === 'string' && e.buyer.toLowerCase() === (walletAddress || '').toLowerCase());
-      if (!mine) return null;
-      let price = 0;
-      if (mine.payment?.quantity) {
-        price = parseFloat(mine.payment.quantity) / Math.pow(10, mine.payment.decimals || 18);
+
+      console.log(`🔍 Searching OpenSea API v2 for previous buy via NFT events: ${contractAddress} #${tokenId} on ${chainName}`);
+
+      // Strategy A: NFT-specific sales history (last 2 sales, desc). events[1] is the previous sale.
+      const byNftUrl = `https://api.opensea.io/api/v2/events/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}?event_type=sale&limit=2&direction=desc`;
+      console.log(`🔗 API URL (by NFT): ${byNftUrl}`);
+
+      let response = await fetch(byNftUrl, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const events = Array.isArray(data.asset_events) ? data.asset_events : [];
+        console.log(`📊 NFT events received: ${events.length}`);
+        if (events.length >= 2) {
+          const prev = events[1];
+          // Prefer sale_price/payment_token fields per v2 docs
+          let price = 0;
+          let decimals = 18;
+          let symbol = 'ETH';
+
+          if (prev.payment_token) {
+            decimals = Number(prev.payment_token.decimals ?? 18);
+            symbol = prev.payment_token.symbol || 'ETH';
+          }
+          if (prev.sale_price != null) {
+            price = Number(prev.sale_price) / Math.pow(10, decimals);
+          } else if (prev.payment && prev.payment.quantity) {
+            // Fallback for alternate shape
+            price = Number(prev.payment.quantity) / Math.pow(10, Number(prev.payment.decimals ?? 18));
+            symbol = prev.payment?.symbol || symbol;
+          }
+
+          if (!Number.isFinite(price) || price < 0) {
+            console.log('❌ Invalid previous sale price payload');
+          } else {
+            const ts = prev.transaction?.timestamp
+              || prev.event_timestamp
+              || prev.closing_date
+              || Date.now();
+            const tsMs = typeof ts === 'number' ? (String(ts).length > 12 ? ts : ts * 1000) : new Date(ts).getTime();
+
+            const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
+            const priceUSD = price * nativePriceUSD;
+
+            console.log(`✅ Previous buy inferred from prior sale: ${price} ${symbol} at ${new Date(tsMs).toISOString()}`);
+            return { price, priceUSD, timestamp: tsMs };
+          }
+        }
+      } else {
+        console.log(`❌ NFT events request failed: ${response.status} ${response.statusText}`);
       }
-      if (!Number.isFinite(price) || price <= 0) return null;
+
+      // Strategy B: Fallback to account-based scan (buyer wallet history)
+      console.log(`🔍 Fallback: scanning buyer account events for acquisition...`);
+      const occurredAfter = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
+      const byAccountUrl = `https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100`;
+      console.log(`🔗 API URL (by account): ${byAccountUrl}`);
+
+      response = await fetch(byAccountUrl, {
+        headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) {
+        console.log(`❌ API response not OK: ${response.status} ${response.statusText}`);
+        return null;
+      }
+
+      const data = await response.json();
+      console.log(`📊 Account events received: ${data.asset_events?.length || 0}`);
+      if (!data.asset_events || !Array.isArray(data.asset_events)) {
+        return null;
+      }
+
+      const purchaseEvent = data.asset_events.find(event => {
+        const nft = event.nft;
+        if (!nft || !nft.contract || !nft.identifier) return false;
+        if (nft.contract.toLowerCase() !== contractAddress.toLowerCase() || nft.identifier !== tokenId.toString()) return false;
+        if (event.event_type === 'sale') return event.buyer && event.buyer.toLowerCase() === walletAddress.toLowerCase();
+        if (event.event_type === 'mint') return event.to_address && event.to_address.toLowerCase() === walletAddress.toLowerCase();
+        if (event.event_type === 'bid_accepted') return event.bidder && event.bidder.toLowerCase() === walletAddress.toLowerCase();
+        return false;
+      });
+
+      if (!purchaseEvent) {
+        console.log(`❌ No acquisition event found for ${walletAddress} → ${contractAddress} #${tokenId}`);
+        return null;
+      }
+
+      let price = 0;
+      if (purchaseEvent.payment && purchaseEvent.payment.quantity) {
+        price = parseFloat(purchaseEvent.payment.quantity) / Math.pow(10, purchaseEvent.payment.decimals || 18);
+      } else if (purchaseEvent.bid && purchaseEvent.bid.amount) {
+        price = parseFloat(purchaseEvent.bid.amount) / Math.pow(10, purchaseEvent.bid.decimals || 18);
+      }
+      if (purchaseEvent.event_type === 'mint' && (!Number.isFinite(price) || price < 0)) {
+        price = 0;
+      } else if (!Number.isFinite(price) || price < 0) {
+        return null;
+      }
+
       const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
       const priceUSD = price * nativePriceUSD;
-      const ts = typeof mine.event_timestamp === 'number' ? mine.event_timestamp * 1000 : new Date(mine.event_timestamp || Date.now()).getTime();
-      return { price, priceUSD, timestamp: ts };
-    } catch (e) {
+      const timestamp = typeof purchaseEvent.event_timestamp === 'number'
+        ? purchaseEvent.event_timestamp * 1000
+        : new Date(purchaseEvent.event_timestamp || Date.now()).getTime();
+
+      console.log(`✅ Purchase data recovered (fallback): ${price} ETH ($${priceUSD}) at ${new Date(timestamp).toISOString()}`);
+      return { price, priceUSD, timestamp };
+      
+    } catch (error) {
+      console.error(`❌ Error in recoverPurchaseData:`, error.message);
       return null;
     }
   }
@@ -2370,109 +2186,574 @@ class NFTTracker {
     return [...new Set(slugs)];
   }
 
-  // Fetch historical purchase data for all tracked wallets
-  async fetchHistoricalPurchases() {
-    console.log('🔍 Fetching historical purchase data...');
-    
-    for (const [address, walletInfo] of this.trackedWallets) {
-      try {
-        await this.fetchWalletHistoricalPurchases(address, walletInfo);
-        // Add delay to avoid rate limiting
-        await this.sleep(500);
-      } catch (error) {
-        console.error(`❌ Error fetching historical purchases for ${walletInfo.name}:`, error.message);
+  // These functions are no longer needed since we always fetch purchase data from OpenSea API
+  // async fetchHistoricalPurchases() { ... }
+  // async fetchWalletHistoricalPurchases(walletAddress, walletInfo) { ... }
+
+  /**
+   * Bulk SALE handling with PnL calculation. Calculate PnL for each item and send one embed.
+   */
+  async handleBulkSaleEvent(event, walletInfo) {
+    console.log(`   📦 Bulk SALE detected for ${walletInfo.name}.`);
+    const txHash = event?.transaction || 'Unknown';
+    const chainName = this.getChainFromOpenSeaChain(event.chain);
+
+    const reportedQty = typeof event?.quantity === 'undefined' ? '-' : event.quantity;
+    const quantity = Number(reportedQty) || (Array.isArray(event?.nfts) ? event.nfts.length : 0) || 0;
+
+    // Try to compute total price
+    let totalPrice = 0;
+    let nativeSymbol = 'ETH';
+    if (event?.payment && event.payment.quantity) {
+      totalPrice = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
+      nativeSymbol = event.payment.symbol || 'ETH';
+    }
+
+    // Collection context (use the first NFT as representative)
+    const representative = Array.isArray(event?.nfts) && event.nfts.length > 0 ? event.nfts[0] : event.nft;
+    const contractAddress = representative?.contract;
+    const tokenName = representative?.collection || representative?.name || 'Unknown';
+
+    // Floor price (best-effort, per collection)
+    let floorPrice = '-';
+    if (contractAddress) {
+      floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
+    }
+
+    // Get collection royalties info
+    let royaltiesInfo = null;
+    try {
+      if (tokenName) {
+        royaltiesInfo = await this.getCollectionRoyalties(tokenName, chainName);
+      }
+    } catch (error) {
+      console.log(`   ⚠️ Could not fetch royalties info: ${error.message}`);
+    }
+
+    // Compute USD conversions for the lot
+    let nativeUsd = 0;
+    try {
+      nativeUsd = await this.getNativeTokenPriceUSD(chainName);
+    } catch (e) {
+      nativeUsd = 0;
+    }
+    const totalPriceUSD = nativeUsd && totalPrice ? totalPrice * nativeUsd : undefined;
+    const unitPrice = quantity > 0 ? totalPrice / quantity : 0;
+    const unitPriceUSD = nativeUsd && unitPrice ? unitPrice * nativeUsd : 0;
+
+    // Calculate PnL for each item and aggregate
+    let totalPnL = 0;
+    let totalPnLUSD = 0;
+    let totalBuyPrice = 0;
+    let totalBuyPriceUSD = 0;
+    let totalHoldTime = 0;
+    let itemsWithPnL = 0;
+
+    if (Array.isArray(event?.nfts) && event.nfts.length > 0) {
+      for (const item of event.nfts) {
+        if (item?.contract && item?.identifier) {
+          // Always search for purchase data via OpenSea API for real-time accuracy
+          console.log(`   🔍 Searching OpenSea API for purchase data for ${item.name || `#${item.identifier}`}...`);
+          const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName);
+          
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+            console.log(`   ✅ Found purchase data via API for ${item.name || `#${item.identifier}`}: ${purchaseData.price} ETH`);
+          } else {
+            console.log(`   ❌ No purchase data found for ${item.name || `#${item.identifier}`}`);
+          }
+            
+          // Calculate PnL if we have purchase data
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+            const itemPnL = unitPrice - purchaseData.price;
+            const itemPnLUSD = unitPriceUSD - (purchaseData.priceUSD || 0);
+            
+            totalPnL += itemPnL;
+            totalPnLUSD += itemPnLUSD;
+            totalBuyPrice += purchaseData.price;
+            totalBuyPriceUSD += purchaseData.priceUSD || 0;
+            
+            // Calculate hold time
+            if (purchaseData.timestamp) {
+              const saleTimestamp = typeof event.event_timestamp === 'number' 
+                ? event.event_timestamp * 1000 
+                : new Date(event.event_timestamp || Date.now()).getTime();
+              const holdTimeMs = saleTimestamp - purchaseData.timestamp;
+              if (holdTimeMs > 0) {
+                totalHoldTime += holdTimeMs;
+              }
+            }
+            
+            itemsWithPnL++;
+            
+            // No need to manage cache since we're always using OpenSea API
+            
+            console.log(`   💰 PnL for ${item.name || `#${item.identifier}`}: ${itemPnL > 0 ? '+' : ''}${itemPnL.toFixed(6)} ${nativeSymbol}`);
+          }
+        }
+      }
+      
+      // No need to save purchase data since we're always using OpenSea API
+    }
+
+    // Calculate averages
+    const avgPnL = itemsWithPnL > 0 ? totalPnL / itemsWithPnL : 0;
+    const avgPnLUSD = itemsWithPnL > 0 ? totalPnLUSD / itemsWithPnL : 0;
+    const avgBuyPrice = itemsWithPnL > 0 ? totalBuyPrice / itemsWithPnL : 0;
+    const avgBuyPriceUSD = itemsWithPnL > 0 ? totalBuyPriceUSD / itemsWithPnL : 0;
+    const avgHoldTime = itemsWithPnL > 0 ? totalHoldTime / itemsWithPnL : 0;
+
+    // Format hold time
+    let holdTimeDisplay = '-';
+    if (avgHoldTime > 0) {
+      const holdTimeMinutes = Math.floor(avgHoldTime / (1000 * 60));
+      const holdTimeHours = Math.floor(avgHoldTime / (1000 * 60 * 60));
+      const holdTimeDays = Math.floor(avgHoldTime / (1000 * 60 * 60 * 24));
+      
+      if (holdTimeMinutes < 60) {
+        holdTimeDisplay = `${holdTimeMinutes}min`;
+      } else if (holdTimeHours < 24) {
+        const hours = Math.floor(holdTimeHours);
+        const minutes = Math.floor(holdTimeMinutes % 60);
+        holdTimeDisplay = `${hours}h ${minutes}min`;
+      } else {
+        const days = Math.floor(holdTimeDays);
+        if (days === 1) {
+          holdTimeDisplay = `${days} day`;
+        } else {
+          holdTimeDisplay = `${days} days`;
+        }
       }
     }
-    
-    console.log(`✅ Historical purchase data fetch completed. Total purchases: ${this.nftPurchases.size}`);
+
+    const transactionData = {
+      type: 'sale',
+      isBulk: true,
+      walletName: walletInfo.name,
+      walletAddress: walletInfo.address,
+      tokenName: tokenName,
+      tokenId: representative?.identifier,
+      contractAddress: contractAddress,
+      transactionHash: txHash,
+      chainName: chainName,
+      timestamp: typeof event.event_timestamp === 'number'
+        ? new Date(event.event_timestamp * 1000)
+        : new Date(event.event_timestamp || Date.now()),
+      price: unitPrice,
+      priceUSD: unitPriceUSD,
+      totalPrice: totalPrice,
+      totalPriceUSD: totalPriceUSD,
+      quantity: quantity,
+      imageUrl: representative?.image_url,
+      nftName: representative?.name,
+      nativeSymbol: nativeSymbol,
+      floorPrice: floorPrice,
+      // PnL data
+      buyPrice: avgBuyPrice,
+      buyPriceUSD: avgBuyPriceUSD,
+      pnl: avgPnL,
+      pnlUSD: avgPnLUSD,
+      holdTime: holdTimeDisplay,
+      royaltiesInfo: royaltiesInfo
+    };
+
+    console.log(`   📦 Bulk SALE Transaction Data ready: ${quantity} items, total ${totalPrice} ${nativeSymbol}`);
+    console.log(`   💰 Average PnL: ${avgPnL > 0 ? '+' : ''}${avgPnL.toFixed(6)} ${nativeSymbol} (${itemsWithPnL}/${quantity} items with PnL data)`);
+    console.log(`   ⏱️ Average hold time: ${holdTimeDisplay}`);
+    await this.sendDiscordNotification(transactionData, this);
   }
 
-  // Fetch historical purchase data for a specific wallet
-  async fetchWalletHistoricalPurchases(walletAddress, walletInfo) {
+  /**
+   * Get known royalties for popular collections that OpenSea API doesn't provide
+   */
+  getKnownCollectionRoyalties(slug, chainName) {
+    const knownRoyalties = {
+      // Base collections
+      'basepaint': 2.5, // BasePaint has 2.5% royalties
+      'friend.tech': 5, // Friend.tech has 5% royalties
+      'degen': 5, // Degen has 5% royalties
+      
+      // Ethereum collections
+      'boredapeyachtclub': 2.5, // BAYC has 2.5% royalties
+      'cryptopunks': 0, // CryptoPunks has 0% royalties
+      'doodles': 5, // Doodles has 5% royalties
+      'azuki': 5, // Azuki has 5% royalties
+      'pudgypenguins': 5, // Pudgy Penguins has 5% royalties
+      
+      // Polygon collections
+      'y00ts': 5, // y00ts has 5% royalties
+      'degenape': 5, // Degen Ape has 5% royalties
+    };
+    
+    return knownRoyalties[slug.toLowerCase()] || null;
+  }
+
+  /**
+   * Get collection creator fees from OpenSea API v2
+   * Creator fees are different from royalties and are always available
+   */
+  async getCollectionCreatorFees(slug, chainName, contractAddress = null, tokenId = null) {
     try {
-      const apiKey = config.opensea.apiKey;
+      const apiKey = this.config.opensea.apiKey;
       
-      console.log(`🔍 Fetching historical purchases for ${walletInfo.name}...`);
+      // Map chain names to OpenSea chain identifiers
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
+      };
       
-      // Fetch sale events (purchases) from the last 30 days
-      const thirtyDaysAgo = Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000);
+      const chain = chainMap[chainName] || 'ethereum';
       
-      const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&occurred_after=${thirtyDaysAgo}&limit=50`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
-      });
+      // Extract creator fees information
+      const creatorFees = {
+        percentage: null,
+        is_enforced: false,
+        is_optional: true
+      };
       
-      if (response.ok) {
-        const data = await response.json();
-        
-        if (data.asset_events && data.asset_events.length > 0) {
-          console.log(`📥 Found ${data.asset_events.length} sale events for ${walletInfo.name}`);
+      // Strategy 1: Try to get creator fees from NFT-specific endpoint (if contract and token ID provided)
+      if (contractAddress && tokenId) {
+        try {
+          const nftResponse = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}`, {
+            headers: {
+              'X-API-KEY': apiKey,
+              'Accept': 'application/json'
+            }
+          });
           
-          for (const event of data.asset_events) {
-            // Check if this is a purchase (wallet is the buyer)
-            if (event.buyer && event.buyer.toLowerCase() === walletAddress.toLowerCase()) {
-              const nft = event.nft;
-              if (nft && nft.contract && nft.identifier) {
-                const purchaseKey = `${nft.contract}_${nft.identifier}`;
+          if (nftResponse.ok) {
+            const nftData = await nftResponse.json();
+            console.log(`🔍 NFT-specific data for ${contractAddress}/${tokenId}:`, JSON.stringify(nftData, null, 2));
+            
+            // Check for creator fees in NFT data
+            if (nftData.creator_fees && Array.isArray(nftData.creator_fees)) {
+              let highestFee = null;
+              for (const fee of nftData.creator_fees) {
+                if (fee.percentage !== null && fee.percentage !== undefined) {
+                  if (highestFee === null || fee.percentage > highestFee) {
+                    highestFee = fee.percentage;
+                  }
+                }
+              }
+              
+              if (highestFee !== null) {
+                creatorFees.percentage = highestFee;
+                console.log(`✅ Found creator fees from NFT endpoint: ${highestFee}%`);
+              }
+            }
+            
+            // Check for creator fees in NFT metadata
+            if (!creatorFees.percentage && nftData.metadata && nftData.metadata.creator_fees) {
+              creatorFees.percentage = nftData.metadata.creator_fees;
+              console.log(`✅ Found creator fees from NFT metadata: ${nftData.metadata.creator_fees}%`);
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️ Could not fetch NFT-specific data: ${error.message}`);
+        }
+      }
+      
+      // Strategy 2: Try to get creator fees from collection details endpoint
+      if (!creatorFees.percentage) {
+        try {
+          const response = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}&include_hidden=true`, {
+            headers: {
+              'X-API-KEY': apiKey,
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log(`🔍 Collection v2 data for ${slug}:`, JSON.stringify(data, null, 2));
+            
+            // Check for creator fees in fees array (this is where OpenSea v2 stores creator fees!)
+            if (data.fees && Array.isArray(data.fees)) {
+              // According to OpenSea v2 API:
+              // required: true = enforced (must be paid)
+              // required: false = optional (can be bypassed)
+              // Creator fees are typically required: false (optional)
+              // Marketplace fees are typically required: true (enforced)
+              
+              // Filter creator fees (required: false = optional)
+              const creatorFeesList = data.fees.filter(fee => fee.required === false);
+              
+              // Filter marketplace fees (required: true = enforced)
+              const marketplaceFees = data.fees.filter(fee => fee.required === true);
+              
+              console.log(`💰 Found ${creatorFeesList.length} creator fees and ${marketplaceFees.length} marketplace fees`);
+              
+              if (creatorFeesList.length > 0) {
+                // Find the highest creator fee percentage
+                let highestFee = null;
+                let highestFeeRecipient = null;
                 
-                // Only add if we don't already have this purchase
-                if (!this.nftPurchases.has(purchaseKey)) {
-                  // Try to get price from the event
-                  let price = 0;
-                  let priceUSD = 0;
-                  const chainName = this.getChainFromOpenSeaChain(event.chain);
-                  
-                  if (event.payment && event.payment.quantity) {
-                    price = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
-                    const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
-                    priceUSD = price * nativePriceUSD;
-                  } else {
-                    // Fallbacks when payment is missing
-                    try {
-                      if (event.order_hash) {
-                        const order = await this.getOrderDetails(event.order_hash, chainName);
-                        if (order && order.price) {
-                          price = order.price;
-                          priceUSD = order.priceUSD || 0;
-                        }
-                      }
-                      if (price === 0 && event.transaction) {
-                        const tx = await this.getTransactionData(event.transaction, chainName);
-                        if (tx && tx.price) {
-                          price = tx.price;
-                          priceUSD = tx.priceUSD || 0;
-                        }
-                      }
-                    } catch (e) {
-                      // ignore fallback failures
+                for (const fee of creatorFeesList) {
+                  if (fee.fee !== null && fee.fee !== undefined) {
+                    if (highestFee === null || fee.fee > highestFee) {
+                      highestFee = fee.fee;
+                      highestFeeRecipient = fee.recipient;
                     }
                   }
-                  
-                  const timestamp = typeof event.event_timestamp === 'number' 
-                    ? event.event_timestamp * 1000 
-                    : new Date(event.event_timestamp).getTime();
-                  
-                  this.nftPurchases.set(purchaseKey, {
-                    price: price,
-                    priceUSD: priceUSD,
-                    timestamp: timestamp,
-                    walletAddress: walletAddress
-                  });
-                  
-                  console.log(`   💾 Added historical purchase: ${nft.name || nft.identifier} for ${price} ETH`);
+                }
+                
+                if (highestFee !== null) {
+                  creatorFees.percentage = highestFee;
+                  console.log(`✅ Found creator fees from v2 fees array: ${highestFee}% (recipient: ${highestFeeRecipient})`);
+                }
+                
+                // Creator fees are enforced if any fee has required: true
+                creatorFees.is_enforced = creatorFeesList.some(fee => fee.required === true);
+                
+                // Log all creator fees for debugging
+                console.log(`📋 All creator fees:`, creatorFeesList.map(f => `${f.fee}% -> ${f.recipient} (required: ${f.required})`));
+              }
+              
+              // Log marketplace fees for reference
+              if (marketplaceFees.length > 0) {
+                console.log(`🏪 Marketplace fees:`, marketplaceFees.map(f => `${f.fee}% -> ${f.recipient} (required: ${f.required})`));
+              }
+            }
+            
+            // Fallback: check for creator fees in various other possible fields
+            if (!creatorFees.percentage && data.creator_fees && Array.isArray(data.creator_fees)) {
+              let highestFee = null;
+              for (const fee of data.creator_fees) {
+                if (fee.percentage !== null && fee.percentage !== undefined) {
+                  if (highestFee === null || fee.percentage > highestFee) {
+                    highestFee = fee.percentage;
+                  }
+                }
+              }
+              
+              if (highestFee !== null) {
+                creatorFees.percentage = highestFee;
+                console.log(`✅ Found creator fees from v2 API: ${highestFee}%`);
+              }
+            }
+            
+            // Alternative: check for creator fees in collection stats
+            if (!creatorFees.percentage && data.stats && data.stats.creator_fees) {
+              creatorFees.percentage = data.stats.creator_fees;
+              console.log(`✅ Found creator fees from v2 stats: ${data.stats.creator_fees}%`);
+            }
+            
+            // Alternative: check for creator fees in collection metadata
+            if (!creatorFees.percentage && data.metadata && data.metadata.creator_fees) {
+              creatorFees.percentage = data.metadata.creator_fees;
+              console.log(`✅ Found creator fees from v2 metadata: ${data.metadata.creator_fees}%`);
+            }
+            
+            // Alternative: check for creator fees in collection settings
+            if (!creatorFees.percentage && data.settings && data.settings.creator_fees) {
+              creatorFees.percentage = data.settings.creator_fees;
+              console.log(`✅ Found creator fees from v2 settings: ${data.settings.creator_fees}%`);
+            }
+            
+            // Try to get creator fees from contract data
+            if (!creatorFees.percentage && data.contracts && Array.isArray(data.contracts)) {
+              for (const contract of data.contracts) {
+                if (contract.creator_fees && contract.creator_fees > 0) {
+                  creatorFees.percentage = contract.creator_fees;
+                  console.log(`✅ Found creator fees from v2 contract: ${contract.creator_fees}%`);
+                  break;
                 }
               }
             }
+            
+            // If not enforced, mark as optional
+            if (!creatorFees.is_enforced) {
+              creatorFees.is_optional = true;
+            }
+            
+          } else {
+            console.log(`❌ Failed to fetch collection data for ${slug} on ${chainName}: ${response.status}`);
           }
+          
+        } catch (error) {
+          console.log(`⚠️ Could not fetch collection data: ${error.message}`);
         }
-      } else {
-        console.log(`❌ Error fetching historical purchases for ${walletInfo.name}: ${response.status}`);
+      }
+      
+      console.log(`✅ Creator fees info: ${creatorFees.percentage !== null ? creatorFees.percentage + '%' : 'N/A'} (${creatorFees.is_enforced ? 'enforced' : 'optional'})`);
+      return creatorFees;
+      
+    } catch (error) {
+      console.error(`Error fetching creator fees for ${slug} on ${chainName}:`, error.message);
+      return null;
+    }
+  }
+
+  async handleBulkPurchaseEvent(event, walletInfo) {
+    console.log(`   📦 Bulk PURCHASE detected for ${walletInfo.name}.`);
+    const txHash = event?.transaction || 'Unknown';
+    const chainName = this.getChainFromOpenSeaChain(event.chain);
+
+    const reportedQty = typeof event?.quantity === 'undefined' ? '-' : event.quantity;
+    const quantity = Number(reportedQty) || (Array.isArray(event?.nfts) ? event.nfts.length : 0) || 0;
+
+    // Try to compute total price
+    let totalPrice = 0;
+    let nativeSymbol = 'ETH';
+    if (event?.payment && event.payment.quantity) {
+      totalPrice = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
+      nativeSymbol = event.payment.symbol || 'ETH';
+    }
+
+    // Collection context (use the first NFT as representative)
+    const representative = Array.isArray(event?.nfts) && event.nfts.length > 0 ? event.nfts[0] : event.nft;
+    const contractAddress = representative?.contract;
+    const tokenName = representative?.collection || representative?.name || 'Unknown';
+
+    // Floor price (best-effort, per collection)
+    let floorPrice = '-';
+    if (contractAddress) {
+      floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
+    }
+
+    // Get collection royalties info
+    let royaltiesInfo = null;
+    try {
+      if (tokenName) {
+        royaltiesInfo = await this.getCollectionRoyalties(tokenName, chainName);
       }
     } catch (error) {
-      console.error(`❌ Error fetching historical purchases for ${walletInfo.name}:`, error.message);
+      console.log(`   ⚠️ Could not fetch royalties info: ${error.message}`);
     }
+
+    // Compute USD conversions for the lot
+    let nativeUsd = 0;
+    try {
+      nativeUsd = await this.getNativeTokenPriceUSD(chainName);
+    } catch (e) {
+      nativeUsd = 0;
+    }
+    const totalPriceUSD = nativeUsd && totalPrice ? totalPrice * nativeUsd : undefined;
+    const unitPrice = quantity > 0 ? totalPrice / quantity : 0;
+    const unitPriceUSD = nativeUsd && unitPrice ? unitPrice * nativeUsd : 0;
+
+    // Calculate PnL for each item and aggregate
+    let totalPnL = 0;
+    let totalPnLUSD = 0;
+    let totalBuyPrice = 0;
+    let totalBuyPriceUSD = 0;
+    let totalHoldTime = 0;
+    let itemsWithPnL = 0;
+
+    if (Array.isArray(event?.nfts) && event.nfts.length > 0) {
+      for (const item of event.nfts) {
+        if (item?.contract && item?.identifier) {
+          // Always search for purchase data via OpenSea API for real-time accuracy
+          console.log(`   🔍 Searching OpenSea API for purchase data for ${item.name || `#${item.identifier}`}...`);
+          const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName);
+          
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+            console.log(`   ✅ Found purchase data via API for ${item.name || `#${item.identifier}`}: ${purchaseData.price} ETH`);
+          } else {
+            console.log(`   ❌ No purchase data found for ${item.name || `#${item.identifier}`}`);
+          }
+            
+          // Calculate PnL if we have purchase data
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+            const itemPnL = unitPrice - purchaseData.price;
+            const itemPnLUSD = unitPriceUSD - (purchaseData.priceUSD || 0);
+            
+            totalPnL += itemPnL;
+            totalPnLUSD += itemPnLUSD;
+            totalBuyPrice += purchaseData.price;
+            totalBuyPriceUSD += purchaseData.priceUSD || 0;
+            
+            // Calculate hold time
+            if (purchaseData.timestamp) {
+              const saleTimestamp = typeof event.event_timestamp === 'number' 
+                ? event.event_timestamp * 1000 
+                : new Date(event.event_timestamp || Date.now()).getTime();
+              const holdTimeMs = saleTimestamp - purchaseData.timestamp;
+              if (holdTimeMs > 0) {
+                totalHoldTime += holdTimeMs;
+              }
+            }
+            
+            itemsWithPnL++;
+            
+            // No need to manage cache since we're always using OpenSea API
+            
+            console.log(`   💰 PnL for ${item.name || `#${item.identifier}`}: ${itemPnL > 0 ? '+' : ''}${itemPnL.toFixed(6)} ${nativeSymbol}`);
+          }
+        }
+      }
+      
+      // No need to save purchase data since we're always using OpenSea API
+    }
+
+    // Calculate averages
+    const avgPnL = itemsWithPnL > 0 ? totalPnL / itemsWithPnL : 0;
+    const avgPnLUSD = itemsWithPnL > 0 ? totalPnLUSD / itemsWithPnL : 0;
+    const avgBuyPrice = itemsWithPnL > 0 ? totalBuyPrice / itemsWithPnL : 0;
+    const avgBuyPriceUSD = itemsWithPnL > 0 ? totalBuyPriceUSD / itemsWithPnL : 0;
+    const avgHoldTime = itemsWithPnL > 0 ? totalHoldTime / itemsWithPnL : 0;
+
+    // Format hold time
+    let holdTimeDisplay = '-';
+    if (avgHoldTime > 0) {
+      const holdTimeMinutes = Math.floor(avgHoldTime / (1000 * 60));
+      const holdTimeHours = Math.floor(avgHoldTime / (1000 * 60 * 60));
+      const holdTimeDays = Math.floor(avgHoldTime / (1000 * 60 * 60 * 24));
+      
+      if (holdTimeMinutes < 60) {
+        holdTimeDisplay = `${holdTimeMinutes}min`;
+      } else if (holdTimeHours < 24) {
+        const hours = Math.floor(holdTimeHours);
+        const minutes = Math.floor(holdTimeMinutes % 60);
+        holdTimeDisplay = `${hours}h ${minutes}min`;
+      } else {
+        const days = Math.floor(holdTimeDays);
+        if (days === 1) {
+          holdTimeDisplay = `${days} day`;
+        } else {
+          holdTimeDisplay = `${days} days`;
+        }
+      }
+    }
+
+    const transactionData = {
+      type: 'purchase',
+      isBulk: true,
+      walletName: walletInfo.name,
+      walletAddress: walletInfo.address,
+      tokenName: tokenName,
+      tokenId: representative?.identifier,
+      contractAddress: contractAddress,
+      transactionHash: txHash,
+      chainName: chainName,
+      timestamp: typeof event.event_timestamp === 'number'
+        ? new Date(event.event_timestamp * 1000)
+        : new Date(event.event_timestamp || Date.now()),
+      totalPrice: totalPrice,
+      totalPriceUSD: totalPriceUSD,
+      quantity: quantity,
+      imageUrl: representative?.image_url,
+      nftName: representative?.name,
+      nativeSymbol: nativeSymbol,
+      floorPrice: floorPrice,
+      // PnL data
+      buyPrice: avgBuyPrice,
+      buyPriceUSD: avgBuyPriceUSD,
+      pnl: avgPnL,
+      pnlUSD: avgPnLUSD,
+      holdTime: holdTimeDisplay,
+      royaltiesInfo: royaltiesInfo
+    };
+
+    console.log(`   📦 Bulk PURCHASE Transaction Data ready: ${quantity} items, total ${totalPrice} ${nativeSymbol}`);
+    console.log(`   💰 Average PnL: ${avgPnL > 0 ? '+' : ''}${avgPnL.toFixed(6)} ${nativeSymbol} (${itemsWithPnL}/${quantity} items with PnL data)`);
+    console.log(`   ⏱️ Average hold time: ${holdTimeDisplay}`);
+    await this.sendDiscordNotification(transactionData, this);
   }
 }
 

@@ -1,6 +1,6 @@
 # NFT Tracker Bot
 
-Bot pro sledování NFT transakcí na více blockchain sítích pomocí OpenSea API a Etherscan.
+Bot pro sledování NFT transakcí na více blockchain sítích pomocí OpenSea API V2.
 
 ## Funkce
 
@@ -29,9 +29,9 @@ Bot pro sledování NFT transakcí na více blockchain sítích pomocí OpenSea 
 - **Abstract** - nová L1 síť
 
 ### 🔧 **Co funguje na každé síti:**
-- ✅ Sledování transakcí přes Etherscan API
-- ✅ NFT metadata přes OpenSea API
-- ✅ Floor prices přes OpenSea API
+- ✅ Sledování transakcí přes OpenSea API V2
+- ✅ NFT metadata přes OpenSea API V2
+- ✅ Floor prices přes OpenSea API V2
 - ✅ Ceny kryptoměn přes CoinGecko
 - ✅ Discord notifikace s chain emoji
 - ✅ Explorer odkazy
@@ -45,15 +45,13 @@ npm install
 
 2. Vytvořte `.env` soubor s vašimi API klíči:
 ```env
-# OpenSea API Key
+# OpenSea API Key (povinné)
 OPENSEA_API_KEY=your_opensea_api_key_here
-
-# Etherscan API Key (volitelné, free tier)
-ETHERSCAN_API_KEY=your_etherscan_api_key_here
 
 # Discord Configuration
 DISCORD_BOT_TOKEN=your_discord_bot_token_here
 DISCORD_CHANNEL_ID=your_channel_id_here
+DISCORD_NFTS_ROLE_ID=your_nfts_role_id_here
 
 # Configuration
 SCAN_INTERVAL=30000
@@ -102,10 +100,10 @@ nft-tracker/
 ## Konfigurace
 
 - `SCAN_INTERVAL`: Interval skenování v milisekundách (výchozí: 30000ms = 30s)
-- `OPENSEA_API_KEY`: OpenSea API klíč pro metadata a floor prices
-- `ETHERSCAN_API_KEY`: Etherscan API klíč pro transakce (volitelné)
+- `OPENSEA_API_KEY`: OpenSea API klíč pro metadata, floor prices a transakce (povinné)
 - `DISCORD_BOT_TOKEN`: Discord bot token
 - `DISCORD_CHANNEL_ID`: ID kanálu pro notifikace
+- `DISCORD_NFTS_ROLE_ID`: ID role pro notifikace o NFT (volitelné)
 
 ## Výstup
 
@@ -119,7 +117,7 @@ Bot bude v konzoli zobrazovat:
 - Embed zprávy s barevným kódováním (zelená = nákup, červená = prodej, oranžová = mint)
 - Detailní informace o transakci včetně PnL
 - Přímé odkazy na blockchain explorery
-- Floor prices z OpenSea API
+- Floor prices z OpenSea API V2
 - Chain emoji pro každou síť
 
 ## Discord Setup
@@ -132,17 +130,14 @@ Bot bude v konzoli zobrazovat:
    - Embed Links
    - Read Message History
 5. Zkopírujte ID kanálu pro notifikace do `.env` souboru
+6. Volitelně nastavte ID role pro NFT notifikace
 
 ## API Klíče
 
-**OpenSea API:**
+**OpenSea API V2:**
 - Získejte na https://docs.opensea.io/reference/api-overview
-- Používá se pro metadata NFT a floor prices na všech sítích
-
-**Etherscan API:**
-- Získejte na https://etherscan.io/apis
-- Volitelné, free tier je dostatečné
-- Používá se pro získání transakcí na všech podporovaných sítích
+- Používá se pro metadata NFT, floor prices a transakce na všech sítích
+- Povinné pro správné fungování bota
 
 ## Poznámky
 
@@ -150,5 +145,6 @@ Bot bude v konzoli zobrazovat:
 - Pro sledování historických transakcí je potřeba upravit logiku
 - Rate limiting je implementován pro respektování API limitů
 - Discord notifikace jsou volitelné - bot funguje i bez nich
-- PnL výpočty jsou založeny na uložených nákupních datech
-- Každá síť má vlastní explorer a marketplace odkazy 
+- PnL výpočty jsou založeny na datech z OpenSea API V2
+- Každá síť má vlastní explorer a marketplace odkazy
+- Bot nyní používá výhradně OpenSea API V2 pro všechny operace 

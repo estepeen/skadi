@@ -18,16 +18,16 @@ async function getTrackedWalletSet(csvPath) {
   return { wallets, set };
 }
 
-const CHAIN_APIS = {
-  'Ethereum': 'https://api.etherscan.io',
-  'Base': 'https://api.basescan.org',
-  'Polygon': 'https://api.polygonscan.com',
-  'Arbitrum': 'https://api.arbiscan.io',
-  'Optimism': 'https://api-optimistic.etherscan.io',
-  'BSC': 'https://api.bscscan.com',
-  'Avalanche': 'https://api.snowtrace.io',
-  'Berachain': 'https://api.berascan.com',
-  'Abstract': 'https://api.abstract.money'
+// Map chain names to OpenSea chain identifiers
+const OPENSEA_CHAINS = {
+  'Ethereum': 'ethereum',
+  'Base': 'base',
+  'Polygon': 'polygon',
+  'Arbitrum': 'arbitrum',
+  'Optimism': 'optimism',
+  'BSC': 'bsc',
+  'Berachain': 'berachain',
+  'Abstract': 'abstract'
 };
 
 const ERC721_TRANSFER_SIG = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -56,21 +56,60 @@ async function findReceiptAcrossChains(txHash) {
         return { chainName: 'Abstract', baseUrl: abstractRpc, receipt: data.result, rpcUrl: abstractRpc };
       }
     } catch (e) {
-      // continue to explorers
+      // continue to OpenSea API
     }
   }
-  for (const [chainName, baseUrl] of Object.entries(CHAIN_APIS)) {
+  
+  // Try OpenSea API V2 for each supported chain
+  for (const [chainName, openseaChain] of Object.entries(OPENSEA_CHAINS)) {
     try {
-      const url = `${baseUrl}/api?module=proxy&action=eth_getTransactionReceipt&txhash=${txHash}&apikey=${config.etherscan.apiKey || ''}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data && data.result && data.result.logs) {
-        return { chainName, baseUrl, receipt: data.result };
+      console.log(`🔍 Trying OpenSea API V2 for ${chainName} (${openseaChain})...`);
+      
+      const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${openseaChain}/transaction/${txHash}`, {
+        headers: {
+          'X-API-KEY': config.opensea.apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.asset_events && data.asset_events.length > 0) {
+          console.log(`✅ Found transaction on ${chainName} via OpenSea API V2`);
+          
+          // Convert OpenSea event to receipt-like format for compatibility
+          const event = data.asset_events[0];
+          const receipt = {
+            logs: [{
+              topics: [
+                ERC721_TRANSFER_SIG,
+                '0x0000000000000000000000000000000000000000000000000000000000000000', // from
+                '0x0000000000000000000000000000000000000000000000000000000000000000', // to
+                '0x0000000000000000000000000000000000000000000000000000000000000000'  // tokenId
+              ],
+              data: '0x',
+              address: event.asset?.asset_contract?.address || '0x0000000000000000000000000000000000000000'
+            }],
+            transactionHash: txHash,
+            blockNumber: event.block_number || '0x0',
+            gasUsed: '0x0',
+            cumulativeGasUsed: '0x0'
+          };
+          
+          return { 
+            chainName, 
+            baseUrl: `https://api.opensea.io/api/v2/chain/${openseaChain}`, 
+            receipt,
+            openseaChain
+          };
+        }
       }
     } catch (e) {
-      // continue
+      console.log(`⚠️ Error checking ${chainName}: ${e.message}`);
+      continue;
     }
   }
+  
   return null;
 }
 
@@ -164,7 +203,7 @@ async function main() {
     process.exit(0);
   }
 
-  // Determine totalPrice from tx value if available
+  // Determine totalPrice from OpenSea API V2 if available
   let totalPrice = 0;
   try {
     if (chainName === 'Abstract' && process.env.ABSTRACT_RPC_URL) {
@@ -175,10 +214,25 @@ async function main() {
         totalPrice = Number(hexToBigInt(data.result.value)) / Math.pow(10, 18);
       }
     } else {
-      const res = await fetch(`${CHAIN_APIS[chainName]}/api?module=proxy&action=eth_getTransactionByHash&txhash=${txHash}&apikey=${config.etherscan.apiKey || ''}`);
-      const data = await res.json();
-      if (data && data.result && data.result.value) {
-        totalPrice = Number(hexToBigInt(data.result.value)) / Math.pow(10, 18);
+      // Use OpenSea API V2 to get transaction price
+      const openseaChain = OPENSEA_CHAINS[chainName];
+      if (openseaChain) {
+        const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${openseaChain}/transaction/${txHash}`, {
+          headers: {
+            'X-API-KEY': config.opensea.apiKey,
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.asset_events && data.asset_events.length > 0) {
+            const event = data.asset_events.find(e => e.event_type === 'item_transferred' || e.event_type === 'item_sold');
+            if (event && event.payment?.amount) {
+              totalPrice = Number(event.payment.amount) / Math.pow(10, event.payment.decimals || 18);
+            }
+          }
+        }
       }
     }
   } catch {}
