@@ -9,31 +9,42 @@ class CollectionCommand {
 
   getCommandData() {
     return new SlashCommandBuilder()
-      .setName('collection')
-      .setDescription('Shows overview of OpenSea collection by slug')
-      .addStringOption(option =>
-        option.setName('slug')
-          .setDescription('Collection slug (e.g. tiny-buds40x40)')
-          .setRequired(true)
-      )
-      .addStringOption(option =>
-        option.setName('chain')
-          .setDescription('Blockchain network')
-          .setRequired(false)
-          .addChoices(
-            { name: 'Base', value: 'base' },
-            { name: 'Ethereum', value: 'ethereum' },
-            { name: 'ApeChain', value: 'ape_chain' },
-            { name: 'Berachain', value: 'berachain' },
-            { name: 'Polygon', value: 'polygon' },
-            { name: 'Arbitrum', value: 'arbitrum' },
-            { name: 'Optimism', value: 'optimism' }
+      .setName('check')
+      .setDescription('Check NFT collections and tokens')
+      .addSubcommand(subcommand =>
+        subcommand
+          .setName('collection')
+          .setDescription('Shows overview of OpenSea collection by slug')
+          .addStringOption(option =>
+            option.setName('slug')
+              .setDescription('Collection slug (e.g. tiny-buds40x40)')
+              .setRequired(true)
+          )
+          .addStringOption(option =>
+            option.setName('chain')
+              .setDescription('Blockchain network')
+              .setRequired(false)
+              .addChoices(
+                { name: 'Base', value: 'base' },
+                { name: 'Ethereum', value: 'ethereum' },
+                { name: 'ApeChain', value: 'ape_chain' },
+                { name: 'Berachain', value: 'berachain' },
+                { name: 'Polygon', value: 'polygon' },
+                { name: 'Arbitrum', value: 'arbitrum' },
+                { name: 'Optimism', value: 'optimism' }
+              )
           )
       );
   }
 
   async execute(interaction) {
     try {
+      const sub = interaction.options.getSubcommand();
+      if (sub !== 'collection') {
+        await interaction.reply({ content: '❌ Unknown check subcommand.', ephemeral: true });
+        return;
+      }
+
       const slug = interaction.options.getString('slug', true);
       const chain = interaction.options.getString('chain') || 'ethereum';
 
@@ -217,7 +228,7 @@ class CollectionCommand {
 
 
 
-      embed.setFooter({ text: `⚡ Powered by STPNGPT • /collection ${slug}` })
+      embed.setFooter({ text: `⚡ Powered by STPNGPT • /check collection ${slug}` })
         .setTimestamp();
 
       // Thumbnail

@@ -1,21 +1,30 @@
 const { Collection } = require('discord.js');
 const CollectionCommand = require('./collectionCommand');
-const CollectionPnlCommand = require('./collectionPnlCommand');
+const AlertsCommand = require('./alertsCommand');
 
 class CommandManager {
   constructor() {
     this.commands = new Collection();
-    this.initializeCommands();
+    this.initialized = false;
   }
 
-  initializeCommands() {
+  async initialize() {
+    if (!this.initialized) {
+      await this.initializeCommands();
+      this.initialized = true;
+    }
+    return this.initialized;
+  }
+
+  async initializeCommands() {
     // Register collection command
     const collectionCommand = new CollectionCommand();
     this.commands.set(collectionCommand.getCommandData().name, collectionCommand);
 
-    // Register collection PnL command
-    const collectionPnlCommand = new CollectionPnlCommand();
-    this.commands.set(collectionPnlCommand.getCommandData().name, collectionPnlCommand);
+    // Register alerts command and initialize its database
+    const alertsCommand = new AlertsCommand();
+    await alertsCommand.initialize();
+    this.commands.set(alertsCommand.getCommandData().name, alertsCommand);
   }
 
   getCommands() {

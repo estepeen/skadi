@@ -243,8 +243,8 @@ class NFTTracker {
     // No need to store purchase data - we'll fetch it from OpenSea API when needed for PnL calculation
     console.log('💾 Purchase data will be fetched from OpenSea API when needed for PnL calculation');
     
-    // Send Discord notification
-    await this.sendDiscordNotification({
+    // Prepare transaction data for alerts checking
+    const alertTransactionData = {
       type: 'purchase',
       walletName: walletInfo.name,
       walletAddress: tx.to,
@@ -262,7 +262,16 @@ class NFTTracker {
       nftName: nftMetadata.name,
       floorPrice: floorPrice,
       royaltiesInfo: royaltiesInfo
-    });
+    };
+
+    // Check alerts for this transaction
+    const alertsMonitor = this.discordNotifier.getAlertsMonitor();
+    if (alertsMonitor) {
+      await alertsMonitor.checkTokenAlerts(alertTransactionData);
+    }
+
+    // Send Discord notification
+    await this.sendDiscordNotification(alertTransactionData);
   }
 
   async analyzeSale(tx, walletInfo, chainName, transactionData) {
@@ -349,8 +358,8 @@ class NFTTracker {
       console.error(`   ❌ Error finding purchase data:`, error.message);
     }
     
-    // Send Discord notification
-    await this.sendDiscordNotification({
+    // Prepare transaction data for alerts checking
+    const alertTransactionData = {
       type: 'sale',
       walletName: walletInfo.name,
       walletAddress: tx.from,
@@ -374,7 +383,16 @@ class NFTTracker {
       pnlUSD: pnlUSD,
       holdTime: holdTime,
       royaltiesInfo: royaltiesInfo
-    });
+    };
+
+    // Check alerts for this transaction
+    const alertsMonitor = this.discordNotifier.getAlertsMonitor();
+    if (alertsMonitor) {
+      await alertsMonitor.checkTokenAlerts(alertTransactionData);
+    }
+
+    // Send Discord notification
+    await this.sendDiscordNotification(alertTransactionData);
   }
 
   async sleep(ms) {
