@@ -126,7 +126,8 @@ class NFTTracker {
         'Optimism': 'optimism',
         'BSC': 'bsc',
         'Berachain': 'berachain',
-        'Abstract': 'abstract'
+        'Abstract': 'abstract',
+        'ApeChain': 'apechain'
       };
       
       const chain = chainMap[chainName];
@@ -432,7 +433,8 @@ class NFTTracker {
         'Optimism': 'optimism',
         'BSC': 'bsc',
         'Berachain': 'berachain',
-        'Abstract': 'abstract'
+        'Abstract': 'abstract',
+        'ApeChain': 'apechain'
       };
       
       const chain = chainMap[chainName];
@@ -516,7 +518,8 @@ class NFTTracker {
         'Optimism': 'optimism',
         'BSC': 'bsc',
         'Berachain': 'berachain',
-        'Abstract': 'abstract'
+        'Abstract': 'abstract',
+        'ApeChain': 'apechain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -563,6 +566,7 @@ class NFTTracker {
   getNativeTokenSymbol(chainName) {
     const symbols = {
       'ethereum': 'ETH',
+      'apechain': 'APE',
       'base': 'ETH',
       'berachain': 'BERA',
       'abstract': 'ABS',
@@ -586,6 +590,7 @@ class NFTTracker {
 
       const chainIds = {
         ethereum: 'ethereum',
+        apechain: 'ethereum', // ApeChain uses ETH
         base: 'ethereum', // Base uses ETH
         berachain: 'berachain',
         abstract: 'abstract',
@@ -692,7 +697,8 @@ class NFTTracker {
         'Optimism': 'optimism',
         'BSC': 'bsc',
         'Berachain': 'berachain',
-        'Abstract': 'abstract'
+        'Abstract': 'abstract',
+        'ApeChain': 'apechain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -808,7 +814,8 @@ class NFTTracker {
         'Optimism': 'optimism',
         'BSC': 'bsc',
         'Berachain': 'berachain',
-        'Abstract': 'abstract'
+        'Abstract': 'abstract',
+        'ApeChain': 'apechain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -919,7 +926,8 @@ class NFTTracker {
         'Optimism': 'optimism',
         'BSC': 'bsc',
         'Berachain': 'berachain',
-        'Abstract': 'abstract'
+        'Abstract': 'abstract',
+        'ApeChain': 'apechain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -1021,6 +1029,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1084,6 +1093,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1142,6 +1152,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1817,6 +1828,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1881,6 +1893,7 @@ class NFTTracker {
   getChainFromOpenSeaChain(chain) {
     const chainMap = {
       'ethereum': 'Ethereum',
+      'apechain': 'ApeChain',
       'base': 'Base',
       'polygon': 'Polygon',
       'arbitrum': 'Arbitrum',
@@ -1901,6 +1914,7 @@ class NFTTracker {
       
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1965,6 +1979,7 @@ class NFTTracker {
       const apiKey = this.config.opensea.apiKey;
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -2106,6 +2121,7 @@ class NFTTracker {
       const apiKey = config.opensea.apiKey;
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -2398,6 +2414,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
+        'ApeChain': 'apechain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -2474,19 +2491,53 @@ class NFTTracker {
             
             // Check for creator fees in fees array (this is where OpenSea v2 stores creator fees!)
             if (data.fees && Array.isArray(data.fees)) {
-              // According to OpenSea v2 API:
-              // required: true = enforced (must be paid)
-              // required: false = optional (can be bypassed)
-              // Creator fees are typically required: false (optional)
-              // Marketplace fees are typically required: true (enforced)
+              console.log(`💰 Found ${data.fees.length} total fees in collection data`);
               
-              // Filter creator fees (required: false = optional)
-              const creatorFeesList = data.fees.filter(fee => fee.required === false);
+              // Enhanced logic for detecting creator fees:
+              // 1. First try to find fees marked as optional (required: false)
+              let creatorFeesList = data.fees.filter(fee => fee.required === false);
               
-              // Filter marketplace fees (required: true = enforced)
-              const marketplaceFees = data.fees.filter(fee => fee.required === true);
+              // 2. If no optional fees found, try to identify creator fees by recipient patterns
+              if (creatorFeesList.length === 0) {
+                console.log(`🔍 No optional fees found, trying to identify creator fees by recipient patterns...`);
+                
+                // Look for fees that might be creator fees based on recipient address patterns
+                // Creator fees often go to the collection owner or a specific creator address
+                const ownerAddress = data.owner?.toLowerCase();
+                const editorAddresses = data.editors?.map(e => e.toLowerCase()) || [];
+                
+                creatorFeesList = data.fees.filter(fee => {
+                  if (!fee.recipient) return false;
+                  
+                  const recipientLower = fee.recipient.toLowerCase();
+                  
+                  // Check if this fee goes to the collection owner or editors (likely creator fees)
+                  if (ownerAddress && recipientLower === ownerAddress) {
+                    console.log(`✅ Identified creator fee: ${fee.fee}% -> owner address ${fee.recipient}`);
+                    return true;
+                  }
+                  
+                  if (editorAddresses.some(editor => recipientLower === editor)) {
+                    console.log(`✅ Identified creator fee: ${fee.fee}% -> editor address ${fee.recipient}`);
+                    return true;
+                  }
+                  
+                  // Check for common creator fee patterns (non-zero addresses that aren't OpenSea)
+                  if (fee.fee > 0 && fee.fee <= 10 && 
+                      !recipientLower.includes('opensea') && 
+                      !recipientLower.includes('0x0000')) {
+                    console.log(`🔍 Potential creator fee: ${fee.fee}% -> ${fee.recipient} (marked as required: ${fee.required})`);
+                    return true;
+                  }
+                  
+                  return false;
+                });
+              }
               
-              console.log(`💰 Found ${creatorFeesList.length} creator fees and ${marketplaceFees.length} marketplace fees`);
+              // Filter marketplace fees (remaining fees that aren't creator fees)
+              const marketplaceFees = data.fees.filter(fee => !creatorFeesList.includes(fee));
+              
+              console.log(`💰 Identified ${creatorFeesList.length} creator fees and ${marketplaceFees.length} marketplace fees`);
               
               if (creatorFeesList.length > 0) {
                 // Find the highest creator fee percentage
@@ -2504,7 +2555,7 @@ class NFTTracker {
                 
                 if (highestFee !== null) {
                   creatorFees.percentage = highestFee;
-                  console.log(`✅ Found creator fees from v2 fees array: ${highestFee}% (recipient: ${highestFeeRecipient})`);
+                  console.log(`✅ Found creator fees: ${highestFee}% (recipient: ${highestFeeRecipient})`);
                 }
                 
                 // Creator fees are enforced if any fee has required: true

@@ -21,12 +21,14 @@ async function testCollectionCommand() {
     console.log('📍 Chain: Base (default)');
     console.log('');
     
-    // Initialize NFT tracker
-    await collectionCommand.initialize();
-    
     // Fetch collection information
     console.log('📊 Fetching collection info...');
-    const collectionInfo = await collectionCommand.nftTracker.getCollectionInfoBySlug(testSlug, 'Base');
+    
+    // Create NFT tracker instance for testing
+    const NFTTracker = require('./services/nftTracker');
+    const nftTracker = new NFTTracker();
+    
+    const collectionInfo = await nftTracker.getCollectionInfoBySlug(testSlug, 'Base');
     
     if (collectionInfo) {
       console.log('✅ Collection info found:');
@@ -43,7 +45,7 @@ async function testCollectionCommand() {
     
     // Fetch collection stats
     console.log('📈 Fetching collection stats...');
-    const stats = await collectionCommand.nftTracker.getCollectionStatsBySlug(testSlug, 'Base');
+    const stats = await nftTracker.getCollectionStatsBySlug(testSlug, 'Base');
     
     if (stats) {
       console.log('✅ Collection stats found:');
@@ -59,7 +61,7 @@ async function testCollectionCommand() {
     
     // Fetch creator fees info
     console.log('💰 Fetching creator fees info...');
-    const creatorFees = await collectionCommand.nftTracker.getCollectionCreatorFees(testSlug, 'Base');
+    const creatorFees = await nftTracker.getCollectionCreatorFees(testSlug, 'Base');
     
     if (creatorFees) {
       console.log('✅ Creator fees info found:');
@@ -76,7 +78,9 @@ async function testCollectionCommand() {
   } catch (error) {
     console.error('❌ Error:', error);
   } finally {
-    await collectionCommand.disconnect();
+    if (nftTracker && typeof nftTracker.disconnect === 'function') {
+      await nftTracker.disconnect();
+    }
     process.exit(0);
   }
 }
