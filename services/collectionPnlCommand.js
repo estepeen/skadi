@@ -36,6 +36,9 @@ class CollectionPnlCommand {
 
   async execute(interaction) {
     try {
+      // Defer reply to avoid interaction timeout
+      await interaction.deferReply();
+      
       const wallet = interaction.options.getString('wallet', true).toLowerCase();
       const slug = interaction.options.getString('slug', true);
       const chain = interaction.options.getString('chain') || 'ethereum';
@@ -173,15 +176,15 @@ class CollectionPnlCommand {
         );
       }
 
-      await interaction.reply({ embeds: [embed] });
+      await interaction.editReply({ embeds: [embed] });
     } catch (error) {
       console.error('❌ Error in collectionpnl command:', error);
       const errorMessage = '❌ An error occurred while calculating PnL.';
       try {
-        if (!interaction.replied) {
-          await interaction.reply({ content: errorMessage, ephemeral: true });
+        if (interaction.deferred) {
+          await interaction.editReply({ content: errorMessage });
         } else {
-          await interaction.followUp({ content: errorMessage, ephemeral: true });
+          await interaction.reply({ content: errorMessage, ephemeral: true });
         }
       } catch (_) {}
     }
