@@ -127,7 +127,7 @@ class NFTTracker {
         'BSC': 'bsc',
         'Berachain': 'berachain',
         'Abstract': 'abstract',
-        'ApeChain': 'apechain'
+        'ApeChain': 'ape_chain'
       };
       
       const chain = chainMap[chainName];
@@ -434,7 +434,7 @@ class NFTTracker {
         'BSC': 'bsc',
         'Berachain': 'berachain',
         'Abstract': 'abstract',
-        'ApeChain': 'apechain'
+        'ApeChain': 'ape_chain'
       };
       
       const chain = chainMap[chainName];
@@ -519,7 +519,7 @@ class NFTTracker {
         'BSC': 'bsc',
         'Berachain': 'berachain',
         'Abstract': 'abstract',
-        'ApeChain': 'apechain'
+        'ApeChain': 'ape_chain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -698,7 +698,7 @@ class NFTTracker {
         'BSC': 'bsc',
         'Berachain': 'berachain',
         'Abstract': 'abstract',
-        'ApeChain': 'apechain'
+        'ApeChain': 'ape_chain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -815,7 +815,7 @@ class NFTTracker {
         'BSC': 'bsc',
         'Berachain': 'berachain',
         'Abstract': 'abstract',
-        'ApeChain': 'apechain'
+        'ApeChain': 'ape_chain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -927,7 +927,7 @@ class NFTTracker {
         'BSC': 'bsc',
         'Berachain': 'berachain',
         'Abstract': 'abstract',
-        'ApeChain': 'apechain'
+        'ApeChain': 'ape_chain'
       };
       
       const chain = chainMap[chainName] || 'ethereum';
@@ -1029,7 +1029,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1093,7 +1093,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1152,7 +1152,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1828,7 +1828,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1893,7 +1893,7 @@ class NFTTracker {
   getChainFromOpenSeaChain(chain) {
     const chainMap = {
       'ethereum': 'Ethereum',
-      'apechain': 'ApeChain',
+      'ape_chain': 'ApeChain',
       'base': 'Base',
       'polygon': 'Polygon',
       'arbitrum': 'Arbitrum',
@@ -1914,7 +1914,7 @@ class NFTTracker {
       
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -1979,7 +1979,7 @@ class NFTTracker {
       const apiKey = this.config.opensea.apiKey;
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -2121,7 +2121,7 @@ class NFTTracker {
       const apiKey = config.opensea.apiKey;
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
@@ -2414,7 +2414,7 @@ class NFTTracker {
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
-        'ApeChain': 'apechain',
+        'ApeChain': 'ape_chain',
         'Base': 'base',
         'Polygon': 'polygon',
         'Arbitrum': 'arbitrum',
