@@ -567,6 +567,7 @@ class NFTTracker {
     const symbols = {
       'ethereum': 'ETH',
       'apechain': 'APE',
+      'ape_chain': 'APE',
       'base': 'ETH',
       'berachain': 'BERA',
       'abstract': 'ABS',
@@ -591,6 +592,7 @@ class NFTTracker {
       const chainIds = {
         ethereum: 'ethereum',
         apechain: 'ethereum', // ApeChain uses ETH
+        ape_chain: 'ethereum', // ApeChain uses ETH
         base: 'ethereum', // Base uses ETH
         berachain: 'berachain',
         abstract: 'abstract',
@@ -2049,7 +2051,7 @@ class NFTTracker {
       // Strategy B: Fallback to account-based scan (buyer wallet history)
       console.log(`🔍 Fallback: scanning buyer account events for acquisition...`);
       const occurredAfter = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
-      const byAccountUrl = `https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100`;
+      const byAccountUrl = `https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100&chain=${chain}`;
       console.log(`🔗 API URL (by account): ${byAccountUrl}`);
 
       response = await fetch(byAccountUrl, {
