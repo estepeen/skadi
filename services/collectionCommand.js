@@ -37,6 +37,8 @@ class CollectionCommand {
       const chain = interaction.options.getString('chain') || 'base';
 
       console.log(`🔍 Collection command executed for: ${slug} on ${chain}`);
+      console.log(`🔍 Fetching collection from: https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`);
+      console.log(`🔍 Fetching stats from: https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats`);
 
       // Don't defer reply - we'll reply directly when ready
 
@@ -48,6 +50,7 @@ class CollectionCommand {
         }
       });
 
+      console.log(`🔍 Collection response status: ${colRes.status} ${colRes.statusText}`);
       if (!colRes.ok) {
         throw new Error(`Get Collection failed: ${colRes.status} ${colRes.statusText}`);
       }
@@ -61,6 +64,7 @@ class CollectionCommand {
         }
       });
 
+      console.log(`🔍 Stats response status: ${statsRes.status} ${statsRes.statusText}`);
       if (!statsRes.ok) {
         throw new Error(`Get Collection Stats failed: ${statsRes.status} ${statsRes.statusText}`);
       }
