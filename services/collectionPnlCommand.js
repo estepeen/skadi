@@ -34,6 +34,115 @@ class CollectionPnlCommand {
       );
   }
 
+  // Helper functions for robust event parsing
+  lower(x) { return (x || '').toLowerCase(); }
+
+  getContractFromEvent(evt) {
+    return this.lower(
+      evt?.nft?.contract ||
+      evt?.contract ||
+      evt?.asset?.asset_contract?.address ||
+      evt?.asset?.contract_address || // některé v2 tvary
+      ''
+    );
+  }
+
+  getTokenIdFromEvent(evt) {
+    // token id může být číslo nebo string – vždy string
+    const id =
+      evt?.nft?.identifier ??
+      evt?.asset?.token_id ??
+      evt?.token_id ??
+      evt?.item?.nft_id?.split('/')?.pop(); // občas přijde composite
+    return id != null ? String(id) : '';
+  }
+
+  getSellerFromEvent(evt) {
+    return this.lower(
+      evt?.seller?.address ||
+      evt?.from_account?.address ||
+      evt?.sender?.address ||
+      ''
+    );
+  }
+
+  getBuyerFromEvent(evt) {
+    return this.lower(
+      evt?.buyer?.address ||
+      evt?.to_account?.address ||
+      evt?.recipient?.address ||
+      ''
+    );
+  }
+
+  parsePayment(evt) {
+    // Nejčastější tvary ve v2
+    // 1) evt.payment.{quantity,decimals,usd_amount}
+    // 2) evt.payment_token.{decimals}, evt.sale_price
+    // 3) evt.price.value (většinou v wei-like jednotkách) + evt.price.currency?.decimals
+    let native = 0;
+    let usd = 0;
+
+    if (evt?.payment?.quantity) {
+      const dec = Number(evt?.payment?.decimals ?? 18);
+      native = Number(evt.payment.quantity) / (10 ** dec);
+      usd = Number(evt?.payment?.usd_amount ?? 0);
+      return { native, usd };
+    }
+
+    if (evt?.sale_price != null) {
+      const dec = Number(evt?.payment_token?.decimals ?? 18);
+      native = Number(evt.sale_price) / (10 ** dec);
+      // USD někdy není – nevadí
+      usd = Number(evt?.payment?.usd_amount ?? 0);
+      return { native, usd };
+    }
+
+    if (evt?.price?.value != null) {
+      const dec = Number(evt?.price?.currency?.decimals ?? 18);
+      native = Number(evt.price.value) / (10 ** dec);
+      usd = Number(evt?.price?.currency?.usd_price ?? 0) * native || 0;
+      return { native, usd };
+    }
+
+    return { native: 0, usd: 0 };
+  }
+
+  async fetchAllAccountEvents({ wallet, chain, after, apiKey }) {
+    let cursor = null;
+    const out = [];
+
+    // Pozn.: řetězíme event_type param několikrát
+    while (true) {
+      const params = new URLSearchParams({
+        limit: '100',
+        occurred_after: String(after),
+        chain
+      });
+      // add multi event_type
+      ['sale','mint','bid_accepted'].forEach(t => params.append('event_type', t));
+      if (cursor) params.set('cursor', cursor);
+
+      const url = `https://api.opensea.io/api/v2/events/accounts/${wallet}?${params.toString()}`;
+      console.log(`🔗 Fetching events: ${url}`);
+      
+      const res = await fetch(url, { headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error(`Events fetch failed: ${res.status} ${await res.text()}`);
+
+      const json = await res.json();
+      const arr = Array.isArray(json.asset_events) ? json.asset_events
+                : Array.isArray(json.events) ? json.events
+                : [];
+
+      console.log(`📊 Fetched ${arr.length} events, cursor: ${cursor}`);
+      out.push(...arr);
+
+      cursor = json.next || json.next_cursor || null;
+      if (!cursor) break; // konec stránkování
+    }
+    return out;
+  }
+
   async execute(interaction) {
     try {
       // Defer reply to avoid interaction timeout
@@ -61,44 +170,53 @@ class CollectionPnlCommand {
       const nftTracker = new NFTTracker();
       const collectionInfo = await nftTracker.getCollectionInfoBySlug(slug, chain);
 
-      // Contracts present in collection
+      // 1) robustně sežeň eventy (včetně paginace)
+      const apiKey = config.opensea.apiKey;
+      const occurredAfter = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
+      
+      let events;
+      try {
+        events = await this.fetchAllAccountEvents({
+          wallet,
+          chain: openSeaChain,
+          after: occurredAfter,
+          apiKey
+        });
+      } catch (e) {
+        await interaction.editReply({ content: `❌ Failed to fetch account events: ${e.message}` });
+        return;
+      }
+
+      console.log(`📊 Total events fetched: ${events.length}`);
+
+      // 2) kontrakty kolekce – buď filtruj chain, nebo když není k dispozici, nech vše
       const contracts = Array.isArray(collectionInfo?.contracts)
         ? collectionInfo.contracts
-            .filter(c => (c?.chain || '').toLowerCase() === (openSeaChain || 'ethereum').toLowerCase())
-            .map(c => (c.address || '').toLowerCase())
+            .filter(c => {
+              const ch = this.lower(c?.chain);
+              return !ch || ch === this.lower(openSeaChain); // když není chain, nezahazuj
+            })
+            .map(c => this.lower(c?.address))
             .filter(Boolean)
         : [];
+
+      console.log(`🔗 Collection contracts: ${contracts.join(', ')}`);
 
       if (contracts.length === 0) {
         await interaction.editReply({ content: '❌ No contracts found for this collection on selected chain.' });
         return;
       }
 
-      // Fetch account events and filter to collection contracts
-      const apiKey = config.opensea.apiKey;
-      const occurredAfter = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
-      const eventsUrl = `https://api.opensea.io/api/v2/events/accounts/${wallet}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100&chain=${openSeaChain}`;
-      const res = await fetch(eventsUrl, { headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' } });
-      if (!res.ok) {
-        await interaction.editReply({ content: `❌ Failed to fetch account events: ${res.status} ${res.statusText}` });
-        return;
-      }
-      const data = await res.json();
-      const events = Array.isArray(data.asset_events) ? data.asset_events : [];
-
-      // Helper to safely extract fields from different v2 shapes
-      const getContract = (evt) => (evt.contract || evt.asset?.asset_contract?.address || evt.nft?.contract || '').toLowerCase();
-      const getTokenId = (evt) => (evt.nft?.identifier || evt.asset?.token_id || evt.token_id || '').toString();
-      const getSeller = (evt) => (evt.seller?.address || evt.from_account?.address || '').toLowerCase();
-      const getBuyer = (evt) => (evt.buyer?.address || evt.to_account?.address || '').toLowerCase();
-
-      // Filter only sales where wallet is the seller and contract in collection
+      // 3) vyber jen prodeje dané kolekce, kde jsi prodávající
       const saleEvents = events.filter(evt => {
-        const contractAddr = getContract(evt);
-        const seller = getSeller(evt);
+        const contractAddr = this.getContractFromEvent(evt);
+        const seller = this.getSellerFromEvent(evt);
         return contractAddr && contracts.includes(contractAddr) && seller === wallet;
       });
 
+      console.log(`💰 Sale events found: ${saleEvents.length}`);
+
+      // 4) výpočet
       let totalPnL = 0;
       let totalPnLUSD = 0;
       let realizedSales = 0;
@@ -108,33 +226,26 @@ class CollectionPnlCommand {
 
       for (const evt of saleEvents) {
         try {
-          // Parse sale price
-          let salePrice = 0;
-          let salePriceUSD = 0;
-          let decimals = 18;
-          if (evt.payment_token) {
-            decimals = Number(evt.payment_token.decimals ?? 18);
-          }
-          if (evt.sale_price != null) {
-            salePrice = Number(evt.sale_price) / Math.pow(10, decimals);
-          } else if (evt.payment && evt.payment.quantity) {
-            salePrice = Number(evt.payment.quantity) / Math.pow(10, Number(evt.payment.decimals ?? 18));
-          }
-          if (evt.payment?.usd_amount) {
-            salePriceUSD = Number(evt.payment.usd_amount);
+          const { native: salePrice, usd: salePriceUSD } = this.parsePayment(evt);
+          if (!Number.isFinite(salePrice) || salePrice <= 0) {
+            console.log(`⚠️ Skipping event with invalid price: ${JSON.stringify(evt, null, 2)}`);
+            continue;
           }
 
-          const contractAddress = getContract(evt);
-          const tokenId = getTokenId(evt);
+          const contractAddress = this.getContractFromEvent(evt);
+          const tokenId = this.getTokenIdFromEvent(evt);
 
-          // Recover previous buy for PnL
+          console.log(`🔍 Recovering purchase data for ${contractAddress} #${tokenId}`);
+
           const purchase = await nftTracker.recoverPurchaseData(contractAddress, tokenId, wallet, openSeaChain);
           if (!purchase || !Number.isFinite(purchase.price)) {
+            console.log(`⚠️ No purchase data found for ${contractAddress} #${tokenId}`);
             continue;
           }
 
           const pnl = salePrice - purchase.price;
           const pnlUSD = (salePriceUSD || 0) - (purchase.priceUSD || 0);
+
           totalPnL += pnl;
           totalPnLUSD += pnlUSD;
           realizedSales += 1;
@@ -142,8 +253,10 @@ class CollectionPnlCommand {
           totalSell += salePrice;
 
           rows.push({ tokenId, buy: purchase.price, sell: salePrice, pnl });
+          
+          console.log(`✅ PnL calculated: ${pnl} (buy: ${purchase.price}, sell: ${salePrice})`);
         } catch (e) {
-          // Skip problematic event
+          console.error(`❌ Error processing event:`, e);
           continue;
         }
       }
@@ -181,7 +294,7 @@ class CollectionPnlCommand {
       if (rows.length > 0) {
         rows.sort((a, b) => b.pnl - a.pnl);
         const top = rows.slice(0, 5).map(r => `#${r.tokenId}: ${r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(4)} ${nativeSymbol}`).join('\n');
-        const bottom = rows.slice(-5).map(r => `#${r.tokenId}: ${r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(4)} ${nativeSymbol}`).join('\n');
+        const bottom = rows.slice(-5).reverse().map(r => `#${r.tokenId}: ${r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(4)} ${nativeSymbol}`).join('\n');
         embed.addFields(
           { name: '🏆 Top PnL', value: top || '—', inline: false },
           { name: '⚠️ Worst PnL', value: bottom || '—', inline: false }
