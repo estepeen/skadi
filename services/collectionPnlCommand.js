@@ -40,7 +40,18 @@ class CollectionPnlCommand {
       const slug = interaction.options.getString('slug', true);
       const chain = interaction.options.getString('chain') || 'ethereum';
 
-      console.log(`🔍 /collectionpnl for wallet ${wallet}, slug ${slug} on ${chain}`);
+      // Map chain names to OpenSea chain IDs
+      const chainMap = {
+        'ethereum': 'ethereum',
+        'ape_chain': 'ape_chain',
+        'base': 'base',
+        'polygon': 'polygon',
+        'arbitrum': 'arbitrum',
+        'optimism': 'optimism'
+      };
+      const openSeaChain = chainMap[chain] || chain;
+
+      console.log(`🔍 /collectionpnl for wallet ${wallet}, slug ${slug} on ${chain} (OpenSea: ${openSeaChain})`);
 
       // Resolve collection contracts for given slug + chain
       const NFTTracker = require('./nftTracker');
@@ -50,7 +61,7 @@ class CollectionPnlCommand {
       // Contracts present in collection
       const contracts = Array.isArray(collectionInfo?.contracts)
         ? collectionInfo.contracts
-            .filter(c => (c?.chain || '').toLowerCase() === (chain || 'ethereum').toLowerCase())
+            .filter(c => (c?.chain || '').toLowerCase() === (openSeaChain || 'ethereum').toLowerCase())
             .map(c => (c.address || '').toLowerCase())
             .filter(Boolean)
         : [];
@@ -64,7 +75,7 @@ class CollectionPnlCommand {
       // Fetch account events and filter to collection contracts
       const apiKey = config.opensea.apiKey;
       const occurredAfter = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
-      const eventsUrl = `https://api.opensea.io/api/v2/events/accounts/${wallet}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100`;
+      const eventsUrl = `https://api.opensea.io/api/v2/events/accounts/${wallet}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100&chain=${openSeaChain}`;
       const res = await fetch(eventsUrl, { headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' } });
       if (!res.ok) {
         await interaction.reply({ content: `❌ Failed to fetch account events: ${res.status} ${res.statusText}`, ephemeral: true });
@@ -116,7 +127,7 @@ class CollectionPnlCommand {
           const tokenId = getTokenId(evt);
 
           // Recover previous buy for PnL
-          const purchase = await nftTracker.recoverPurchaseData(contractAddress, tokenId, wallet, chain);
+          const purchase = await nftTracker.recoverPurchaseData(contractAddress, tokenId, wallet, openSeaChain);
           if (!purchase || !Number.isFinite(purchase.price)) {
             continue;
           }
@@ -136,7 +147,7 @@ class CollectionPnlCommand {
         }
       }
 
-      const nativeSymbol = nftTracker.getNativeTokenSymbol(chain);
+      const nativeSymbol = nftTracker.getNativeTokenSymbol(openSeaChain);
 
       const embed = new EmbedBuilder()
         .setTitle(`📈 PnL for ${slug}`)
