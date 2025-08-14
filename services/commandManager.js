@@ -1,5 +1,6 @@
 const { Collection } = require('discord.js');
 const CollectionCommand = require('./collectionCommand');
+const CollectionPnlCommand = require('./collectionPnlCommand');
 
 class CommandManager {
   constructor() {
@@ -11,6 +12,10 @@ class CommandManager {
     // Register collection command
     const collectionCommand = new CollectionCommand();
     this.commands.set(collectionCommand.getCommandData().name, collectionCommand);
+
+    // Register collection PnL command
+    const collectionPnlCommand = new CollectionPnlCommand();
+    this.commands.set(collectionPnlCommand.getCommandData().name, collectionPnlCommand);
   }
 
   getCommands() {
