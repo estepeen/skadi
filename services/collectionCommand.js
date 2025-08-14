@@ -41,7 +41,7 @@ class CollectionCommand {
       // Don't defer reply - we'll reply directly when ready
 
       // 1) Collection detail (name, fees, total_supply, odkazy)
-      const colRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}`, {
+      const colRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`, {
         headers: {
           'Accept': 'application/json',
           'X-API-KEY': config.opensea.apiKey
@@ -54,7 +54,7 @@ class CollectionCommand {
       const collection = await colRes.json();
 
       // 2) Stats (floor, volume, holders)
-      const statsRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
+      const statsRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats`, {
         headers: {
           'Accept': 'application/json',
           'X-API-KEY': config.opensea.apiKey
