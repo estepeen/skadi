@@ -23,6 +23,7 @@ class CollectionCommand {
           .addChoices(
             { name: 'Base', value: 'base' },
             { name: 'Ethereum', value: 'ethereum' },
+            { name: 'ApeChain', value: 'apechain' },
             { name: 'Polygon', value: 'polygon' },
             { name: 'Arbitrum', value: 'arbitrum' },
             { name: 'Optimism', value: 'optimism' }
@@ -37,7 +38,7 @@ class CollectionCommand {
 
       console.log(`🔍 Collection command executed for: ${slug} on ${chain}`);
 
-      await interaction.deferReply();
+      // Don't defer reply - we'll reply directly when ready
 
       // 1) Collection detail (name, fees, total_supply, odkazy)
       const colRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}`, {
@@ -76,6 +77,32 @@ class CollectionCommand {
       const creatorFees = fees.filter(f => f && f.recipient && f.required === false);
       // Platform fees (required = true)
       const platformFees = fees.filter(f => f && f.required === true);
+      
+      // If no creator fees found in fees array, try alternative methods
+      if (creatorFees.length === 0) {
+        console.log(`🔍 No creator fees found in fees array, trying alternative methods...`);
+        
+        // Try to get creator fees from NFTTracker
+        try {
+          const NFTTracker = require('./nftTracker');
+          const nftTracker = new NFTTracker();
+          const creatorFeesInfo = await nftTracker.getCollectionCreatorFees(slug, chain);
+          
+          if (creatorFeesInfo && creatorFeesInfo.percentage !== null) {
+            // Create a synthetic creator fee entry
+            creatorFees.push({
+              fee: creatorFeesInfo.percentage,
+              recipient: 'Creator',
+              required: false
+            });
+            console.log(`✅ Found creator fees via NFTTracker: ${creatorFeesInfo.percentage}%`);
+          }
+          
+          await nftTracker.disconnect();
+        } catch (error) {
+          console.log(`⚠️ Could not fetch creator fees via NFTTracker: ${error.message}`);
+        }
+      }
 
       // Stats data
       const floor = stats?.total?.floor_price ?? null;
@@ -105,6 +132,11 @@ class CollectionCommand {
       const fmtEth = (n) => {
         if (n === null || n === undefined) return '—';
         if (typeof n === 'number') {
+          // Pro ceny nižší než 0.01 ETH zobrazuj 4 desetinná místa
+          if (n < 0.01) {
+            return `${n.toFixed(4)} ETH`;
+          }
+          // Pro vyšší ceny zobrazuj 2 desetinná místa
           return `${n.toFixed(2)} ETH`;
         }
         return '—';
@@ -119,9 +151,9 @@ class CollectionCommand {
 
       // Create embed podle uživatelských požadavků
       const embed = new EmbedBuilder()
-        .setTitle(`📊 ${name}`)
+        .setTitle(`📊 Collection ${name}`)
         .setURL(`https://opensea.io/collection/${slug}`)
-        .setColor(0x00ff88);
+        .setColor(0x00bfff);
 
       // Description pod titulek (přímo text, bez názvu field)
       if (description) {
@@ -187,7 +219,22 @@ class CollectionCommand {
         embed.addFields({ name: '🔗 Social Links', value: socialLinks.join(' • '), inline: false });
       }
 
-      await interaction.editReply({ embeds: [embed] });
+      // Send the response directly
+      try {
+        await interaction.reply({ embeds: [embed] });
+        console.log(`✅ Collection command completed successfully for ${slug}`);
+      } catch (replyError) {
+        console.error('❌ Could not send response:', replyError.message);
+        // Try to send a simple reply as fallback
+        try {
+          await interaction.reply({ 
+            content: `📊 **Collection ${name}**\n🎯 Floor: ${fmtEth(floor)}\n🪙 Creator Fee: ${feeList(creatorFees)}\n🔢 Supply: ${fmt(totalSupply)}`, 
+            ephemeral: true 
+          });
+        } catch (fallbackError) {
+          console.error('❌ Could not send fallback response:', fallbackError.message);
+        }
+      }
 
     } catch (error) {
       console.error('❌ Error in collection command:', error);
@@ -199,7 +246,13 @@ class CollectionCommand {
       } else if (error.message.includes('401') || error.message.includes('unauthorized')) {
         errorMessage = '❌ OpenSea API authentication error. Please check your API key.';
       }
-      await interaction.editReply({ content: errorMessage });
+      
+      // Try to send error message
+      try {
+        await interaction.reply({ content: errorMessage, ephemeral: true });
+      } catch (replyError) {
+        console.error('❌ Could not send error message:', replyError.message);
+      }
     }
   }
 
