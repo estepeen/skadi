@@ -23,7 +23,7 @@ class CollectionCommand {
           .addChoices(
             { name: 'Base', value: 'base' },
             { name: 'Ethereum', value: 'ethereum' },
-            { name: 'ApeChain', value: 'apechain' },
+            { name: 'ApeChain', value: 'ape_chain' },
             { name: 'Polygon', value: 'polygon' },
             { name: 'Arbitrum', value: 'arbitrum' },
             { name: 'Optimism', value: 'optimism' }
