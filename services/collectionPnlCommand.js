@@ -68,7 +68,6 @@ class CollectionPnlCommand {
 
       if (contracts.length === 0) {
         await interaction.reply({ content: '❌ No contracts found for this collection on selected chain.', ephemeral: true });
-        await nftTracker.disconnect();
         return;
       }
 
@@ -79,7 +78,6 @@ class CollectionPnlCommand {
       const res = await fetch(eventsUrl, { headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' } });
       if (!res.ok) {
         await interaction.reply({ content: `❌ Failed to fetch account events: ${res.status} ${res.statusText}`, ephemeral: true });
-        await nftTracker.disconnect();
         return;
       }
       const data = await res.json();
@@ -158,7 +156,8 @@ class CollectionPnlCommand {
           { name: '🧾 Sales Count', value: String(realizedSales), inline: true },
           { name: '💰 Total Buy', value: `${totalBuy.toFixed(4)} ${nativeSymbol}`, inline: true },
           { name: '💵 Total Sell', value: `${totalSell.toFixed(4)} ${nativeSymbol}`, inline: true },
-          { name: '📊 Realized PnL', value: `${totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(4)} ${nativeSymbol}`, inline: true }
+          { name: '📊 Realized PnL', value: `${totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(4)} ${nativeSymbol}`, inline: true },
+          { name: '⚠️ Note', value: 'PnL calculation does not include gas fees, platform fees, or other transaction costs.', inline: false }
         )
         .setFooter({ text: '⚡ Powered by STPNGPT • /collectionpnl' })
         .setTimestamp();
@@ -175,12 +174,15 @@ class CollectionPnlCommand {
       }
 
       await interaction.reply({ embeds: [embed] });
-      await nftTracker.disconnect();
     } catch (error) {
       console.error('❌ Error in collectionpnl command:', error);
       const errorMessage = '❌ An error occurred while calculating PnL.';
       try {
-        await interaction.reply({ content: errorMessage, ephemeral: true });
+        if (!interaction.replied) {
+          await interaction.reply({ content: errorMessage, ephemeral: true });
+        } else {
+          await interaction.followUp({ content: errorMessage, ephemeral: true });
+        }
       } catch (_) {}
     }
   }
