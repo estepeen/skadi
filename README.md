@@ -24,7 +24,7 @@ Bot pro sledování NFT transakcí na více blockchain sítích pomocí OpenSea 
 - **Arbitrum** - L2 síť  
 - **Optimism** - L2 síť
 - **BSC** - Binance Smart Chain
-- **Avalanche** - C-Chain
+- **Avalanche** - C_Chain
 - **Berachain** - nová L1 síť
 - **Abstract** - nová L1 síť
 
