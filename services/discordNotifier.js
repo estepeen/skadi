@@ -275,7 +275,18 @@ class DiscordNotifier {
     
     // Create NFT link; use best-effort numeric tokenId
     const tokenIdForUrl = tokenIdNumber !== 'Unknown' ? tokenIdNumber : (tokenId || '0');
-    const nftOpenSeaUrl = `https://opensea.io/assets/${chainName.toLowerCase() === 'ethereum' ? 'ethereum' : chainName.toLowerCase()}/${contractAddress}/${tokenIdForUrl}`;
+    
+    // Map chain names to OpenSea URL chain identifiers
+    let openSeaChainId;
+    if (chainName.toLowerCase() === 'ethereum') {
+      openSeaChainId = 'ethereum';
+    } else if (chainName.toLowerCase() === 'apechain') {
+      openSeaChainId = 'ape_chain'; // ApeChain uses ape_chain in URLs
+    } else {
+      openSeaChainId = chainName.toLowerCase();
+    }
+    
+    const nftOpenSeaUrl = `https://opensea.io/assets/${openSeaChainId}/${contractAddress}/${tokenIdForUrl}`;
     const nftIdOnlyLink = `[${tokenIdNumber}](${nftOpenSeaUrl})`;
     const nftLink = `[${nftDisplayName}](${nftOpenSeaUrl})`;
     

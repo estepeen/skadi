@@ -34,7 +34,7 @@ class CollectionCommand {
   async execute(interaction) {
     try {
       const slug = interaction.options.getString('slug', true);
-      const chain = interaction.options.getString('chain') || 'base';
+      const chain = interaction.options.getString('chain') || 'ethereum';
 
       console.log(`🔍 Collection command executed for: ${slug} on ${chain}`);
       console.log(`🔍 Fetching collection from: https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`);
