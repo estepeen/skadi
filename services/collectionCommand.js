@@ -24,6 +24,7 @@ class CollectionCommand {
             { name: 'Base', value: 'base' },
             { name: 'Ethereum', value: 'ethereum' },
             { name: 'ApeChain', value: 'ape_chain' },
+            { name: 'Berachain', value: 'berachain' },
             { name: 'Polygon', value: 'polygon' },
             { name: 'Arbitrum', value: 'arbitrum' },
             { name: 'Optimism', value: 'optimism' }
@@ -133,15 +134,31 @@ class CollectionCommand {
         return '—';
       };
 
+      // Get native token symbol for the chain
+      const getNativeSymbol = (chainName) => {
+        const symbols = {
+          'ethereum': 'ETH',
+          'ape_chain': 'APE',
+          'berachain': 'BERA',
+          'base': 'ETH',
+          'polygon': 'MATIC',
+          'arbitrum': 'ETH',
+          'optimism': 'ETH'
+        };
+        return symbols[chainName.toLowerCase()] || 'ETH';
+      };
+
+      const nativeSymbol = getNativeSymbol(chain);
+
       const fmtEth = (n) => {
         if (n === null || n === undefined) return '—';
         if (typeof n === 'number') {
-          // Pro ceny nižší než 0.01 ETH zobrazuj 4 desetinná místa
+          // Pro ceny nižší než 0.01 zobrazuj 4 desetinná místa
           if (n < 0.01) {
-            return `${n.toFixed(4)} ETH`;
+            return `${n.toFixed(4)} ${nativeSymbol}`;
           }
           // Pro vyšší ceny zobrazuj 2 desetinná místa
-          return `${n.toFixed(2)} ETH`;
+          return `${n.toFixed(2)} ${nativeSymbol}`;
         }
         return '—';
       };

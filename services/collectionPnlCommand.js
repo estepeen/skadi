@@ -26,6 +26,7 @@ class CollectionPnlCommand {
           .addChoices(
             { name: 'Ethereum', value: 'ethereum' },
             { name: 'ApeChain', value: 'ape_chain' },
+            { name: 'Berachain', value: 'berachain' },
             { name: 'Base', value: 'base' },
             { name: 'Polygon', value: 'polygon' },
             { name: 'Arbitrum', value: 'arbitrum' },
@@ -166,9 +167,9 @@ class CollectionPnlCommand {
       console.log(`🔍 /collectionpnl for wallet ${wallet}, slug ${slug} on ${chain} (OpenSea: ${openSeaChain})`);
 
       // Resolve collection contracts for given slug + chain
-      const NFTTracker = require('./nftTracker');
+      const NFTTracker = require('../services/nftTracker');
       const nftTracker = new NFTTracker();
-      const collectionInfo = await nftTracker.getCollectionInfoBySlug(slug, chain);
+      const collectionInfo = await nftTracker.getCollectionInfoBySlug(slug, openSeaChain);
 
       // 1) robustně sežeň eventy (včetně paginace)
       const apiKey = config.opensea.apiKey;
