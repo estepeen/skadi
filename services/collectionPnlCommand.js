@@ -70,7 +70,7 @@ class CollectionPnlCommand {
         : [];
 
       if (contracts.length === 0) {
-        await interaction.reply({ content: '❌ No contracts found for this collection on selected chain.', ephemeral: true });
+        await interaction.editReply({ content: '❌ No contracts found for this collection on selected chain.' });
         return;
       }
 
@@ -80,7 +80,7 @@ class CollectionPnlCommand {
       const eventsUrl = `https://api.opensea.io/api/v2/events/accounts/${wallet}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100&chain=${openSeaChain}`;
       const res = await fetch(eventsUrl, { headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' } });
       if (!res.ok) {
-        await interaction.reply({ content: `❌ Failed to fetch account events: ${res.status} ${res.statusText}`, ephemeral: true });
+        await interaction.editReply({ content: `❌ Failed to fetch account events: ${res.status} ${res.statusText}` });
         return;
       }
       const data = await res.json();
@@ -164,6 +164,18 @@ class CollectionPnlCommand {
         )
         .setFooter({ text: '⚡ Powered by STPNGPT • /collectionpnl' })
         .setTimestamp();
+
+      // Add collection stats info
+      if (collectionInfo?.stats) {
+        const stats = collectionInfo.stats;
+        const floorPrice = stats.floor_price ? `${stats.floor_price} ${nativeSymbol}` : '—';
+        const totalVolume = stats.total_volume ? `${stats.total_volume} ${nativeSymbol}` : '—';
+        
+        embed.addFields(
+          { name: '🏠 Floor Price', value: floorPrice, inline: true },
+          { name: '📈 Total Volume', value: totalVolume, inline: true }
+        );
+      }
 
       // Add top 5 results (wins/losses)
       if (rows.length > 0) {

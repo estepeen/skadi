@@ -591,8 +591,8 @@ class NFTTracker {
 
       const chainIds = {
         ethereum: 'ethereum',
-        apechain: 'ethereum', // ApeChain uses ETH
-        ape_chain: 'ethereum', // ApeChain uses ETH
+        apechain: 'apecoin', // ApeChain uses APE token
+        ape_chain: 'apecoin', // ApeChain uses APE token
         base: 'ethereum', // Base uses ETH
         berachain: 'berachain',
         abstract: 'abstract',
@@ -632,6 +632,7 @@ class NFTTracker {
         async () => {
           const symbolMap = {
             'ethereum': 'ETH',
+            'apecoin': 'APE',
             'matic-network': 'MATIC',
             'avalanche-2': 'AVAX',
             'binancecoin': 'BNB'
