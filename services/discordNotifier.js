@@ -1,6 +1,9 @@
 const { Client, GatewayIntentBits, EmbedBuilder, Events } = require('discord.js');
 const config = require('../config');
 const CommandManager = require('./commandManager');
+const CryptoPriceService = require('./cryptoPriceService');
+const ChannelManager = require('./channelManager');
+const AlertsMonitor = require('./alertsMonitor');
 
 class DiscordNotifier {
   constructor() {
@@ -13,6 +16,9 @@ class DiscordNotifier {
     
     this.isReady = false;
     this.commandManager = new CommandManager();
+    this.cryptoPriceService = new CryptoPriceService();
+    this.channelManager = new ChannelManager(this.client);
+    this.alertsMonitor = new AlertsMonitor(this);
     this.setupEventHandlers();
   }
 
@@ -21,8 +27,23 @@ class DiscordNotifier {
       console.log(`🤖 Discord bot logged in as ${this.client.user.tag}`);
       this.isReady = true;
       
+      // Initialize command manager (includes alerts database)
+      await this.commandManager.initialize();
+      
+      // Initialize alerts monitor
+      await this.alertsMonitor.initialize();
+      
       // Register slash commands
       await this.registerSlashCommands();
+      
+      // Initialize channel manager
+      const guildId = this.client.guilds.cache.first()?.id;
+      if (guildId) {
+        await this.channelManager.initialize(guildId);
+      }
+      
+      // Start crypto price service
+      this.cryptoPriceService.startService(this.client);
     });
 
     this.client.on('error', (error) => {
@@ -76,14 +97,21 @@ class DiscordNotifier {
       
       // Get all commands from command manager
       const commands = this.commandManager.getCommands();
-      
-      // Register commands globally (this may take up to 1 hour to propagate)
-      const result = await this.client.application.commands.set(commands);
-      
-      console.log(`✅ Successfully registered ${result.size} slash commands:`);
-      result.forEach(command => {
-        console.log(`   /${command.name}: ${command.description}`);
-      });
+
+      // Prefer guild-scoped registration for instant updates during development
+      const guild = this.client.guilds.cache.first();
+      if (guild) {
+        const result = await guild.commands.set(commands);
+        console.log(`✅ Registered ${result.size} guild slash commands (instant):`);
+        result.forEach(command => console.log(`   /${command.name}: ${command.description}`));
+        // Optionally clear global commands to avoid stale entries
+        try { await this.client.application.commands.set([]); } catch {}
+      } else {
+        // Fallback to global registration (can take up to 1 hour to propagate)
+        const result = await this.client.application.commands.set(commands);
+        console.log(`✅ Registered ${result.size} global slash commands (propagation may take up to 1 hour):`);
+        result.forEach(command => console.log(`   /${command.name}: ${command.description}`));
+      }
       
     } catch (error) {
       console.error('❌ Failed to register slash commands:', error);
@@ -661,6 +689,9 @@ class DiscordNotifier {
   }
 
   async disconnect() {
+    if (this.cryptoPriceService) {
+      this.cryptoPriceService.stopService();
+    }
     if (this.commandManager) {
       await this.commandManager.cleanup();
     }
@@ -668,6 +699,18 @@ class DiscordNotifier {
       await this.client.destroy();
       console.log('🔌 Discord bot disconnected');
     }
+  }
+
+  getChannelManager() {
+    return this.channelManager;
+  }
+
+  getAlertsMonitor() {
+    return this.alertsMonitor;
+  }
+
+  getClient() {
+    return this.client;
   }
 }
 

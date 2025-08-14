@@ -54,5 +54,12 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
+// Export function to get discord notifier
+function getDiscordNotifier() {
+  return nftTracker?.discordNotifier;
+}
+
+module.exports = { getDiscordNotifier };
+
 // Start the bot
 main(); 
