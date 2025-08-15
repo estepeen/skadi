@@ -111,17 +111,20 @@ class DiscordNotifier {
 
   async registerSlashCommands() {
     try {
-      console.log('🔧 Registering slash commands...');
+      console.log('🔧 Registering slash commands (guild-scoped, clearing globals to avoid duplicates)...');
       
       // Get all commands from command manager
       const commands = this.commandManager.getCommands();
 
-      // 1) Register globally so all guilds (current and future) get the commands
-      const globalResult = await this.client.application.commands.set(commands);
-      console.log(`✅ Registered ${globalResult.size} global slash commands (may take up to ~1 hour to propagate globally)`);
-      globalResult.forEach(command => console.log(`   /${command.name}: ${command.description}`));
+      // Clear GLOBAL commands to prevent duplicates with guild-scoped commands
+      try {
+        await this.client.application.commands.set([]);
+        console.log('🧹 Cleared global slash commands');
+      } catch (clearErr) {
+        console.log(`⚠️ Could not clear global commands: ${clearErr.message}`);
+      }
 
-      // 2) Also register per-guild for instant availability in current guilds
+      // Register per-guild for instant availability
       const guilds = this.client.guilds.cache;
       if (guilds && guilds.size > 0) {
         for (const [guildId, guild] of guilds) {
@@ -133,7 +136,7 @@ class DiscordNotifier {
           }
         }
       } else {
-        console.log('⚠️ No guilds in cache during command registration. Only global commands were set.');
+        console.log('⚠️ No guilds in cache during command registration.');
       }
       
     } catch (error) {
