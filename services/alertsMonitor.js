@@ -32,6 +32,7 @@ class AlertsMonitor {
   startFloorPriceMonitoring() {
     // Check floor prices every 1 minute
     setInterval(() => {
+      console.log('⏰ Floor price monitoring interval triggered');
       this.checkAllCollectionAlerts();
     }, 60 * 1000);
     
@@ -183,10 +184,13 @@ class AlertsMonitor {
     const cacheKey = `${slug}-${chain}`;
     const now = Date.now();
     
+    console.log(`🔍 Fetching floor price for ${slug} on ${chain}...`);
+    
     // Check cache first
     if (this.floorPriceCache.has(cacheKey)) {
       const cached = this.floorPriceCache.get(cacheKey);
       if (now - cached.timestamp < this.FLOOR_PRICE_CACHE_DURATION) {
+        console.log(`📊 Using cached floor price for ${slug}: ${cached.price} ETH`);
         return cached.price;
       }
     }
@@ -194,6 +198,8 @@ class AlertsMonitor {
     try {
       // Fetch from OpenSea API
       const url = `https://api.opensea.io/api/v2/collections/${slug}/stats`;
+      console.log(`🌐 Fetching from: ${url}`);
+      
       const response = await fetch(url, {
         headers: {
           'X-API-KEY': config.opensea.apiKey || '',
@@ -202,6 +208,7 @@ class AlertsMonitor {
       });
 
       if (!response.ok) {
+        console.error(`❌ OpenSea API error for ${slug}: ${response.status} ${response.statusText}`);
         throw new Error(`OpenSea API error: ${response.status}`);
       }
 
@@ -209,6 +216,7 @@ class AlertsMonitor {
       const floorPrice = data.total?.floor_price;
 
       if (floorPrice && floorPrice > 0) {
+        console.log(`✅ Got floor price for ${slug}: ${floorPrice} ETH`);
         // Cache the result
         this.floorPriceCache.set(cacheKey, {
           price: floorPrice,
@@ -216,9 +224,11 @@ class AlertsMonitor {
         });
         
         return floorPrice;
+      } else {
+        console.log(`⚠️ No floor price data for ${slug} on ${chain}`);
       }
     } catch (error) {
-      console.error(`❌ Error fetching floor price for ${slug}:`, error.message);
+      console.error(`❌ Error fetching floor price for ${slug} on ${chain}:`, error.message);
     }
 
     return null;
