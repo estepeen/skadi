@@ -29,11 +29,18 @@ class DiscordNotifier {
       
       // Initialize command manager (includes alerts database)
       await this.commandManager.initialize();
+      try {
+        const loaded = this.commandManager.getCommands?.() || [];
+        const names = Array.isArray(loaded)
+          ? loaded.map(c => c.name).join(', ')
+          : '(unknown)';
+        console.log(`🧩 Commands initialized: ${names || '(none)'}`);
+      } catch {}
       
       // Initialize alerts monitor
       await this.alertsMonitor.initialize();
       
-      // Register slash commands
+      // Register slash commands (global + per guild for instant availability)
       await this.registerSlashCommands();
       
       // Initialize channel manager
@@ -48,6 +55,17 @@ class DiscordNotifier {
 
     this.client.on('error', (error) => {
       console.error('❌ Discord bot error:', error);
+    });
+
+    // Ensure commands are installed when the bot joins a new guild
+    this.client.on('guildCreate', async (guild) => {
+      try {
+        const commands = this.commandManager.getCommands();
+        const result = await guild.commands.set(commands);
+        console.log(`✅ Registered ${result.size} guild slash commands for new guild: ${guild.name} (${guild.id})`);
+      } catch (error) {
+        console.error(`❌ Failed to register slash commands for new guild ${guild?.name} (${guild?.id}):`, error);
+      }
     });
 
     // Handle slash command interactions
@@ -98,19 +116,24 @@ class DiscordNotifier {
       // Get all commands from command manager
       const commands = this.commandManager.getCommands();
 
-      // Prefer guild-scoped registration for instant updates during development
-      const guild = this.client.guilds.cache.first();
-      if (guild) {
-        const result = await guild.commands.set(commands);
-        console.log(`✅ Registered ${result.size} guild slash commands (instant):`);
-        result.forEach(command => console.log(`   /${command.name}: ${command.description}`));
-        // Optionally clear global commands to avoid stale entries
-        try { await this.client.application.commands.set([]); } catch {}
+      // 1) Register globally so all guilds (current and future) get the commands
+      const globalResult = await this.client.application.commands.set(commands);
+      console.log(`✅ Registered ${globalResult.size} global slash commands (may take up to ~1 hour to propagate globally)`);
+      globalResult.forEach(command => console.log(`   /${command.name}: ${command.description}`));
+
+      // 2) Also register per-guild for instant availability in current guilds
+      const guilds = this.client.guilds.cache;
+      if (guilds && guilds.size > 0) {
+        for (const [guildId, guild] of guilds) {
+          try {
+            const result = await guild.commands.set(commands);
+            console.log(`✅ Registered ${result.size} guild slash commands (instant) for ${guild.name} (${guildId})`);
+          } catch (e) {
+            console.log(`⚠️ Failed to register guild commands for ${guild?.name} (${guildId}): ${e.message}`);
+          }
+        }
       } else {
-        // Fallback to global registration (can take up to 1 hour to propagate)
-        const result = await this.client.application.commands.set(commands);
-        console.log(`✅ Registered ${result.size} global slash commands (propagation may take up to 1 hour):`);
-        result.forEach(command => console.log(`   /${command.name}: ${command.description}`));
+        console.log('⚠️ No guilds in cache during command registration. Only global commands were set.');
       }
       
     } catch (error) {

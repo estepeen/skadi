@@ -33,10 +33,27 @@ class CommandManager {
 
   async executeCommand(interaction) {
     const commandName = interaction.commandName;
-    const command = this.commands.get(commandName);
+    let command = this.commands.get(commandName);
 
     if (!command) {
-      console.error(`❌ Unknown command: ${commandName}`);
+      // Try lazy initialization in case commands were not ready yet
+      try {
+        if (!this.initialized) {
+          console.log('⚠️ Commands not initialized yet. Initializing now...');
+          await this.initialize();
+          command = this.commands.get(commandName);
+        }
+      } catch (e) {
+        console.error('❌ Failed to initialize commands on-demand:', e.message);
+      }
+    }
+
+    if (!command) {
+      const available = Array.from(this.commands.keys());
+      console.error(`❌ Unknown command: ${commandName}. Available: ${available.join(', ') || '(none)'}`);
+      try {
+        await interaction.reply({ content: '⚠️ Commands are updating. Please try again in a moment.', ephemeral: true });
+      } catch {}
       return;
     }
 

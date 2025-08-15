@@ -197,10 +197,10 @@ class AlertsCommand {
       .addSubcommand(subcommand =>
         subcommand
           .setName('remove')
-          .setDescription('Remove an alert by ID')
+          .setDescription('Remove one or more alerts by ID')
           .addStringOption(option =>
             option.setName('alert_id')
-              .setDescription('Alert ID to remove')
+              .setDescription('Alert ID, multiple IDs comma-separated, or -1 to remove all active')
               .setRequired(true)
           )
       )
@@ -740,29 +740,55 @@ class AlertsCommand {
   }
 
   async handleRemoveAlert(interaction) {
-    const alertId = interaction.options.getString('alert_id');
+    const input = interaction.options.getString('alert_id');
     const userId = interaction.user.id;
-    
-    const success = await this.alertsDb.removeAlert(userId, alertId);
-    
-    if (!success) {
+
+    // Special case: -1 removes all active alerts
+    if (input.trim() === '-1') {
+      const removedCount = await this.alertsDb.removeAllActiveUserAlerts(userId);
+      if (removedCount === 0) {
+        await interaction.editReply({ content: '📋 You have no active alerts to remove.', embeds: [] });
+        return;
+      }
+      const embedAll = new EmbedBuilder()
+        .setTitle('🗑️ Alerts Removed')
+        .setDescription(`Removed ${removedCount} active alert${removedCount !== 1 ? 's' : ''}.`)
+        .setColor(0xff6b6b)
+        .setTimestamp()
+        .setFooter({ text: 'Skadi NFT Tracker' });
+      await interaction.editReply({ content: '', embeds: [embedAll] });
+      return;
+    }
+
+    // Multiple IDs comma-separated support
+    const ids = input.split(',').map(s => s.trim()).filter(Boolean);
+    const results = { removed: [], notFound: [] };
+
+    for (const id of ids) {
+      // Quick sanity check: IDs are alphanumeric (legacy IDs are uppercase base36)
+      const ok = await this.alertsDb.removeAlert(userId, id);
+      if (ok) results.removed.push(id);
+      else results.notFound.push(id);
+    }
+
+    if (results.removed.length === 0) {
       await interaction.editReply({ 
-        content: `❌ **Alert not found**\n\nAlert ID \`${alertId}\` was not found in your alerts.\n\n💡 **Check your alerts:**\nUse \`/alerts list\` to see all your active alerts and their IDs.`,
+        content: `❌ **No matching alerts found**\nIDs: \`${ids.join(', ')}\`\n\nUse \`/alerts list\` to view your active alerts.`,
         embeds: []
       });
       return;
     }
 
     const embed = new EmbedBuilder()
-      .setTitle('🗑️ Alert Removed')
-      .setDescription(`Alert \`${alertId}\` has been successfully removed.`)
+      .setTitle('🗑️ Alerts Removed')
+      .setDescription(`Removed: \`${results.removed.join(', ')}\``)
       .setColor(0xff6b6b)
-      .addFields(
-        { name: '✅ Status', value: 'Alert deleted from database', inline: true },
-        { name: '📝 Note', value: 'You will no longer receive notifications for this alert', inline: false }
-      )
       .setTimestamp()
       .setFooter({ text: 'Skadi NFT Tracker' });
+
+    if (results.notFound.length > 0) {
+      embed.addFields({ name: 'Not found', value: results.notFound.map(id => `\`${id}\``).join(', ').slice(0, 1000), inline: false });
+    }
 
     await interaction.editReply({ content: '', embeds: [embed] });
   }
