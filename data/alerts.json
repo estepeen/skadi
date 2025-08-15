@@ -27,7 +27,8 @@
       "price": 13.346,
       "collectionName": "Pudgy Penguins",
       "createdAt": "2025-08-14T21:35:03.423Z",
-      "active": true
+      "active": false,
+      "triggeredAt": "2025-08-15T01:44:32.956Z"
     },
     {
       "id": "0C3Y9LU7",
