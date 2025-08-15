@@ -25,6 +25,7 @@ class ChannelManager {
         category = await guild.channels.create({
           name: this.categoryName,
           type: ChannelType.GuildCategory,
+          position: 0, // Place category at the very top of the server
           permissionOverwrites: [
             {
               id: guild.roles.everyone.id,
@@ -32,6 +33,12 @@ class ChannelManager {
             }
           ]
         });
+      } else {
+        // Move existing category to the top if it's not already there
+        if (category.position !== 0) {
+          console.log(`📁 Moving category ${this.categoryName} to top position`);
+          await category.setPosition(0);
+        }
       }
 
       this.categoryIdByGuild.set(guild.id, category.id);
