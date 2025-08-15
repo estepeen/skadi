@@ -160,6 +160,7 @@ class ChannelManager {
         name: channelName,
         type: ChannelType.GuildText,
         parent: categoryId,
+        position: 0, // Place at the top of the category
         permissionOverwrites: [
           {
             id: guild.roles.everyone.id,
