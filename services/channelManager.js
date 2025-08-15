@@ -214,7 +214,7 @@ class ChannelManager {
           },
           {
             name: '🎯 Alert Types Available',
-            value: '• Collection floor price alerts\n• Specific NFT token alerts\n• Trait-based alerts (coming soon)',
+            value: '• Collection floor price alerts\n• Specific NFT token alerts\n• Trait-based alerts',
             inline: false
           },
           {
