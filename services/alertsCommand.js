@@ -301,7 +301,7 @@ class AlertsCommand {
     }
 
     // Vytvoř nebo získej uživatelský kanál
-    const userChannel = await channelManager.getUserChannel(userId, username);
+    const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
       await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
       return;
@@ -412,7 +412,7 @@ class AlertsCommand {
     }
 
     // Vytvoř nebo získej uživatelský kanál
-    const userChannel = await channelManager.getUserChannel(userId, username);
+    const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
       await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
       return;
@@ -581,7 +581,7 @@ class AlertsCommand {
       return;
     }
 
-    const userChannel = await channelManager.getUserChannel(userId, username);
+    const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
       await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
       return;
@@ -826,7 +826,7 @@ class AlertsCommand {
 
     if (action === 'remove') {
       try {
-        const result = await channelManager.deleteUserChannel(userId);
+        const result = await channelManager.deleteUserChannel(userId, interaction.guildId);
         if (!result.ok) {
           await interaction.editReply({ 
             content: '❌ You don\'t have an alerts channel to remove.', 
@@ -908,7 +908,7 @@ class AlertsCommand {
           },
           {
             name: '⚡ System Status',
-            value: '🟢 **Active**\n✅ Floor price monitoring\n✅ Transaction monitoring\n🔄 Checking every 3 minutes',
+            value: '🟢 **Active**\n✅ Floor price monitoring\n✅ Transaction monitoring\n🔄 Checking every 1 minute',
             inline: false
           }
         )
