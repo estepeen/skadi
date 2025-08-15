@@ -9,8 +9,8 @@ class AlertsMonitor {
     this.initialized = false;
     this.lastFloorPriceCheck = new Map(); // slug -> timestamp
     this.floorPriceCache = new Map(); // slug -> { price, timestamp }
-    this.FLOOR_PRICE_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
-    this.FLOOR_PRICE_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes
+    this.FLOOR_PRICE_CHECK_INTERVAL = 60 * 1000; // 1 minute
+    this.FLOOR_PRICE_CACHE_DURATION = 60 * 1000; // 1 minute
   }
 
   async initialize() {
@@ -30,21 +30,21 @@ class AlertsMonitor {
   }
 
   startFloorPriceMonitoring() {
-    // Check floor prices every 3 minutes
+    // Check floor prices every 1 minute
     setInterval(() => {
       this.checkAllCollectionAlerts();
-    }, 3 * 60 * 1000);
+    }, 60 * 1000);
     
-    console.log('🔄 Started periodic floor price monitoring (every 3 minutes)');
+    console.log('🔄 Started periodic floor price monitoring (every 1 minute)');
   }
 
   startTokenListingMonitoring() {
-    // Check token listings every 90 seconds
+    // Check token listings every 1 minute
     setInterval(() => {
       this.checkAllTokenListingAlerts();
-    }, 90 * 1000);
+    }, 60 * 1000);
 
-    console.log('🔄 Started periodic token listing monitoring (every 90 seconds)');
+    console.log('🔄 Started periodic token listing monitoring (every 1 minute)');
   }
 
   async checkAllCollectionAlerts() {

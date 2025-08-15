@@ -3,9 +3,9 @@ const { ChannelType, PermissionFlagsBits } = require('discord.js');
 class ChannelManager {
   constructor(client) {
     this.client = client;
-    this.userChannels = new Map(); // userId -> channelId
     this.categoryName = 'NFT Alerts';
-    this.categoryId = null;
+    this.categoryIdByGuild = new Map();
+    this.userChannelsByGuild = new Map();
   }
 
   async initialize(guildId) {
@@ -16,7 +16,6 @@ class ChannelManager {
         return false;
       }
 
-      // Najdi nebo vytvoř kategorii pro alerts
       let category = guild.channels.cache.find(c => 
         c.type === ChannelType.GuildCategory && c.name === this.categoryName
       );
@@ -28,16 +27,14 @@ class ChannelManager {
           type: ChannelType.GuildCategory,
           permissionOverwrites: [
             {
-              id: guild.roles.everyone,
+              id: guild.roles.everyone.id,
               deny: [PermissionFlagsBits.ViewChannel]
             }
           ]
         });
       }
 
-      this.categoryId = category.id;
-      
-      // Načti existující alerts kanály do cache
+      this.categoryIdByGuild.set(guild.id, category.id);
       await this.loadExistingChannels(guild);
       
       console.log(`✅ Channel Manager initialized with category: ${this.categoryName}`);
@@ -50,18 +47,22 @@ class ChannelManager {
 
   async loadExistingChannels(guild) {
     try {
-      // Najdi všechny kanály v NFT Alerts kategorii
+      const categoryId = this.categoryIdByGuild.get(guild.id);
       const alertsChannels = guild.channels.cache.filter(channel => 
-        channel.parentId === this.categoryId && 
+        channel.parentId === categoryId && 
         channel.name.startsWith('alerts-')
       );
 
       console.log(`🔍 Found ${alertsChannels.size} existing alerts channels`);
 
-      // Pro každý kanál zkus najít userId z permissions
+      let map = this.userChannelsByGuild.get(guild.id);
+      if (!map) {
+        map = new Map();
+        this.userChannelsByGuild.set(guild.id, map);
+      }
+
       for (const [channelId, channel] of alertsChannels) {
         try {
-          // Najdi permission overwrite pro uživatele (ne pro @everyone nebo bot)
           const userOverwrite = channel.permissionOverwrites.cache.find(overwrite => 
             overwrite.type === 1 && // PermissionOverwriteType.Member
             overwrite.id !== guild.roles.everyone.id &&
@@ -69,7 +70,7 @@ class ChannelManager {
           );
 
           if (userOverwrite) {
-            this.userChannels.set(userOverwrite.id, channelId);
+            map.set(userOverwrite.id, channelId);
             console.log(`📝 Loaded channel mapping: ${userOverwrite.id} -> ${channel.name}`);
           }
         } catch (error) {
@@ -81,45 +82,47 @@ class ChannelManager {
     }
   }
 
-  async getUserChannel(userId, username) {
+  async getUserChannel(userId, username, guildId) {
     try {
-      // Ensure we have a guild reference
-      const guild = this.client.guilds.cache.values().next().value;
+      const guild = this.client.guilds.cache.get(guildId);
       if (!guild) {
         throw new Error('Guild not available');
       }
 
-      // First, try to find existing channel from cache
-      if (this.userChannels.has(userId)) {
-        const channelId = this.userChannels.get(userId);
+      let map = this.userChannelsByGuild.get(guild.id);
+      if (!map) {
+        map = new Map();
+        this.userChannelsByGuild.set(guild.id, map);
+      }
+
+      if (map.has(userId)) {
+        const channelId = map.get(userId);
         const channel = this.client.channels.cache.get(channelId);
         if (channel) {
           console.log(`✅ Found existing alerts channel: ${channel.name} for user ${username}`);
           return channel;
         } else {
-          // Channel doesn't exist, remove from cache
-          this.userChannels.delete(userId);
+          map.delete(userId);
         }
       }
 
-      // If not in cache, scan all channels to find existing user channel
       console.log(`🔍 Scanning for existing alerts channel for user ${username}...`);
-      
-      // Ensure categoryId if possible
-      if (!this.categoryId) {
+      let categoryId = this.categoryIdByGuild.get(guild.id);
+      if (!categoryId) {
         const category = guild.channels.cache.find(c => 
           c.type === ChannelType.GuildCategory && c.name === this.categoryName
         );
-        if (category) this.categoryId = category.id;
+        if (category) {
+          categoryId = category.id;
+          this.categoryIdByGuild.set(guild.id, categoryId);
+        }
       }
 
-      // Look for existing alerts channels
       const alertsChannels = guild.channels.cache.filter(channel => 
         channel.type === ChannelType.GuildText &&
         channel.name.startsWith('alerts-')
       );
 
-      // Check each channel for user permissions
       for (const [channelId, channel] of alertsChannels) {
         try {
           const userOverwrite = channel.permissionOverwrites.cache.find(overwrite => 
@@ -131,8 +134,7 @@ class ChannelManager {
 
           if (userOverwrite) {
             console.log(`✅ Found existing alerts channel: ${channel.name} for user ${username}`);
-            // Update cache
-            this.userChannels.set(userId, channelId);
+            map.set(userId, channelId);
             return channel;
           }
         } catch (error) {
@@ -140,18 +142,27 @@ class ChannelManager {
         }
       }
 
-      // No existing channel found, create new one
       const channelName = `alerts-${username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-      
       console.log(`📝 Creating new private alerts channel: ${channelName} for user ${username}`);
-      
+      if (!categoryId) {
+        const category = await guild.channels.create({
+          name: this.categoryName,
+          type: ChannelType.GuildCategory,
+          permissionOverwrites: [
+            { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }
+          ]
+        });
+        categoryId = category.id;
+        this.categoryIdByGuild.set(guild.id, categoryId);
+      }
+
       const channel = await guild.channels.create({
         name: channelName,
         type: ChannelType.GuildText,
-        parent: this.categoryId,
+        parent: categoryId,
         permissionOverwrites: [
           {
-            id: guild.roles.everyone,
+            id: guild.roles.everyone.id,
             deny: [PermissionFlagsBits.ViewChannel]
           },
           {
@@ -176,8 +187,7 @@ class ChannelManager {
         ]
       });
 
-      // Save to cache
-      this.userChannels.set(userId, channel.id);
+      map.set(userId, channel.id);
 
       // Send welcome message
       await this.sendWelcomeMessage(channel, userId);
@@ -269,30 +279,36 @@ class ChannelManager {
     this.userChannels.delete(userId);
   }
 
-  async deleteUserChannel(userId) {
+  async deleteUserChannel(userId, guildId) {
     try {
-      // Try cached mapping first
-      let channelId = this.userChannels.get(userId);
-
-      // Ensure we have a guild reference
-      const guild = this.client.guilds.cache.values().next().value;
+      const guild = this.client.guilds.cache.get(guildId);
       if (!guild) {
         throw new Error('Guild not available');
       }
 
-      // If not cached, try to discover by scanning channels
+      let map = this.userChannelsByGuild.get(guild.id);
+      if (!map) {
+        map = new Map();
+        this.userChannelsByGuild.set(guild.id, map);
+      }
+
+      let channelId = map.get(userId);
+
       if (!channelId) {
-        // Ensure categoryId if possible
-        if (!this.categoryId) {
+        let categoryId = this.categoryIdByGuild.get(guild.id);
+        if (!categoryId) {
           const category = guild.channels.cache.find(c => 
             c.type === ChannelType.GuildCategory && c.name === this.categoryName
           );
-          if (category) this.categoryId = category.id;
+          if (category) {
+            categoryId = category.id;
+            this.categoryIdByGuild.set(guild.id, categoryId);
+          }
         }
 
         const candidates = guild.channels.cache.filter(ch => 
           ch.type === ChannelType.GuildText &&
-          (!this.categoryId || ch.parentId === this.categoryId) &&
+          (!categoryId || ch.parentId === categoryId) &&
           ch.name.startsWith('alerts-')
         );
 
@@ -318,8 +334,7 @@ class ChannelManager {
         await channel.delete('User requested channel removal');
       }
 
-      // Remove from cache
-      this.userChannels.delete(userId);
+      map.delete(userId);
       
       // TODO: Remove all alerts for this user from database
       // This would be implemented when we have persistent alert storage
