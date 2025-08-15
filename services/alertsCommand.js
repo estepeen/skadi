@@ -231,8 +231,8 @@ class AlertsCommand {
 
     console.log(`🔔 Alerts command executed - subcommand: ${subcommand}, user: ${userId}`);
 
-    // Immediate reply to prevent timeout
-    await interaction.reply({ content: '⏳ Processing your alert request...', ephemeral: false });
+    // Immediate reply to prevent timeout (send as ephemeral so only the user sees it)
+    await interaction.reply({ content: '⏳ Processing your alert request...', ephemeral: true });
 
     try {
       switch (subcommand) {
