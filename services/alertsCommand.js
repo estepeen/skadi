@@ -52,12 +52,15 @@ class AlertsCommand {
               .setRequired(false)
               .addChoices(
                 { name: 'Ethereum', value: 'ethereum' },
-                { name: 'ApeChain', value: 'ape_chain' },
-                { name: 'Berachain', value: 'berachain' },
                 { name: 'Base', value: 'base' },
                 { name: 'Polygon', value: 'polygon' },
                 { name: 'Arbitrum', value: 'arbitrum' },
-                { name: 'Optimism', value: 'optimism' }
+                { name: 'Optimism', value: 'optimism' },
+                { name: 'BSC', value: 'bsc' },
+                { name: 'Avalanche', value: 'avalanche' },
+                { name: 'Berachain', value: 'berachain' },
+                { name: 'Abstract', value: 'abstract' },
+                { name: 'ApeChain', value: 'ape_chain' }
               )
           )
           .addStringOption(option =>
@@ -107,12 +110,15 @@ class AlertsCommand {
               .setRequired(false)
               .addChoices(
                 { name: 'Ethereum', value: 'ethereum' },
-                { name: 'ApeChain', value: 'ape_chain' },
-                { name: 'Berachain', value: 'berachain' },
                 { name: 'Base', value: 'base' },
                 { name: 'Polygon', value: 'polygon' },
                 { name: 'Arbitrum', value: 'arbitrum' },
-                { name: 'Optimism', value: 'optimism' }
+                { name: 'Optimism', value: 'optimism' },
+                { name: 'BSC', value: 'bsc' },
+                { name: 'Avalanche', value: 'avalanche' },
+                { name: 'Berachain', value: 'berachain' },
+                { name: 'Abstract', value: 'abstract' },
+                { name: 'ApeChain', value: 'ape_chain' }
               )
           )
           .addStringOption(option =>
@@ -171,12 +177,15 @@ class AlertsCommand {
               .setRequired(false)
               .addChoices(
                 { name: 'Ethereum', value: 'ethereum' },
-                { name: 'ApeChain', value: 'ape_chain' },
-                { name: 'Berachain', value: 'berachain' },
                 { name: 'Base', value: 'base' },
                 { name: 'Polygon', value: 'polygon' },
                 { name: 'Arbitrum', value: 'arbitrum' },
-                { name: 'Optimism', value: 'optimism' }
+                { name: 'Optimism', value: 'optimism' },
+                { name: 'BSC', value: 'bsc' },
+                { name: 'Avalanche', value: 'avalanche' },
+                { name: 'Berachain', value: 'berachain' },
+                { name: 'Abstract', value: 'abstract' },
+                { name: 'ApeChain', value: 'ape_chain' }
               )
           )
           .addStringOption(option =>
