@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const fetch = require('node-fetch');
 const config = require('../config');
 
@@ -41,7 +41,7 @@ class CollectionCommand {
     try {
       const sub = interaction.options.getSubcommand();
       if (sub !== 'collection') {
-        await interaction.reply({ content: '❌ Unknown check subcommand.', ephemeral: true });
+        await interaction.reply({ content: '❌ Unknown check subcommand.', flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -261,7 +261,7 @@ class CollectionCommand {
         try {
           await interaction.reply({ 
             content: `📊 **Collection ${name}**\n🎯 Floor: ${fmtEth(floor)}\n🪙 Creator Fee: ${feeList(creatorFees)}\n🔢 Supply: ${fmt(totalSupply)}`, 
-            ephemeral: true 
+            flags: MessageFlags.Ephemeral 
           });
         } catch (fallbackError) {
           console.error('❌ Could not send fallback response:', fallbackError.message);
@@ -281,7 +281,7 @@ class CollectionCommand {
       
       // Try to send error message
       try {
-        await interaction.reply({ content: errorMessage, ephemeral: true });
+        await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
       } catch (replyError) {
         console.error('❌ Could not send error message:', replyError.message);
       }

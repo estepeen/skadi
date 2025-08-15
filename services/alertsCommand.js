@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const fetch = require('node-fetch');
 const config = require('../config');
 const AlertsDatabase = require('./alertsDatabase');
@@ -232,7 +232,7 @@ class AlertsCommand {
     console.log(`🔔 Alerts command executed - subcommand: ${subcommand}, user: ${userId}`);
 
     // Immediate reply to prevent timeout (send as ephemeral so only the user sees it)
-    await interaction.reply({ content: '⏳ Processing your alert request...', ephemeral: true });
+    await interaction.reply({ content: '⏳ Processing your alert request...', flags: MessageFlags.Ephemeral });
 
     try {
       switch (subcommand) {
@@ -260,7 +260,7 @@ class AlertsCommand {
         default:
           await interaction.reply({ 
             content: '❌ Unknown alert subcommand.', 
-            ephemeral: true 
+            flags: MessageFlags.Ephemeral 
           });
       }
     } catch (error) {
@@ -271,7 +271,7 @@ class AlertsCommand {
         if (interaction.replied) {
           await interaction.editReply({ content: errorMessage });
         } else {
-          await interaction.reply({ content: errorMessage, ephemeral: true });
+          await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
         }
       } catch (replyError) {
         console.error('❌ Could not send error response:', replyError.message);
