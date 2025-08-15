@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, Events } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, Events, MessageFlags } = require('discord.js');
 const config = require('../config');
 const CommandManager = require('./commandManager');
 const CryptoPriceService = require('./cryptoPriceService');
@@ -85,17 +85,27 @@ class DiscordNotifier {
       await this.client.login(config.discord.botToken);
       console.log('🔗 Connecting to Discord...');
       
-      // Wait for the bot to be ready
+      // Wait for the bot to be ready AND commands to be initialized
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('Discord bot connection timeout'));
         }, 30000); // 30 second timeout
         
-        this.client.once('ready', () => {
-          clearTimeout(timeout);
-          console.log(`🤖 Discord bot logged in as ${this.client.user.tag}`);
-          this.isReady = true;
-          resolve();
+        // Wait for full initialization (commands + alerts) to complete
+        this.client.once('ready', async () => {
+          try {
+            clearTimeout(timeout);
+            console.log(`🤖 Discord bot logged in as ${this.client.user.tag}`);
+            this.isReady = true;
+            
+            // Wait a moment for all initialization to complete
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            resolve();
+          } catch (error) {
+            clearTimeout(timeout);
+            reject(error);
+          }
         });
         
         this.client.once('error', (error) => {
