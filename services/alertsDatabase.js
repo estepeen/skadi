@@ -138,6 +138,30 @@ class AlertsDatabase {
     }
   }
 
+  async removeAllActiveUserAlerts(userId) {
+    if (!this.initialized) return 0;
+
+    try {
+      if (!this.alerts.has(userId)) {
+        return 0; // No alerts for this user
+      }
+
+      const userAlerts = this.alerts.get(userId);
+      // Keep only alerts explicitly marked inactive
+      const remaining = userAlerts.filter(alert => alert.active === false);
+      const removedCount = userAlerts.length - remaining.length;
+
+      this.alerts.set(userId, remaining);
+      await this.saveToFile();
+
+      console.log(`✅ Removed ${removedCount} active alerts for user ${userId}`);
+      return removedCount;
+    } catch (error) {
+      console.error('❌ Error removing active user alerts from database:', error.message);
+      return 0;
+    }
+  }
+
   getUserAlerts(userId) {
     if (!this.initialized) return [];
     
