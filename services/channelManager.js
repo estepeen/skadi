@@ -230,7 +230,10 @@ class ChannelManager {
         timestamp: new Date().toISOString()
       };
 
-      await channel.send({ embeds: [welcomeEmbed] });
+      await channel.send({ 
+        content: `<@${userId}> 🔔 **Welcome to your alerts channel!**`,
+        embeds: [welcomeEmbed] 
+      });
     } catch (error) {
       console.log(`❌ Failed to send welcome message: ${error.message}`);
     }

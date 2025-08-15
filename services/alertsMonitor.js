@@ -71,7 +71,17 @@ class AlertsMonitor {
       // Check each unique collection
       for (const [slugChain, alerts] of alertsBySlug) {
         const [slug, chain] = slugChain.split('-');
-        await this.checkCollectionFloorPrice(slug, chain, alerts);
+        console.log(`🔍 Processing ${alerts.length} alerts for ${slug} on ${chain}`);
+        
+        const currentFloorPrice = await this.getCollectionFloorPrice(slug, chain);
+        if (currentFloorPrice) {
+          console.log(`📊 ${slug} current floor: ${currentFloorPrice} ETH`);
+          for (const alert of alerts) {
+            await this.checkCollectionAlert(alert, currentFloorPrice);
+          }
+        } else {
+          console.log(`⚠️ Could not get floor price for ${slug} on ${chain}`);
+        }
         
         // Small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -81,38 +91,35 @@ class AlertsMonitor {
     }
   }
 
-  async checkCollectionFloorPrice(slug, chain, alerts) {
-    try {
-      const currentFloorPrice = await this.getCollectionFloorPrice(slug, chain);
-      if (!currentFloorPrice) return;
 
-      console.log(`📊 ${slug} floor price: ${currentFloorPrice} ETH`);
-
-      for (const alert of alerts) {
-        await this.checkCollectionAlert(alert, currentFloorPrice);
-      }
-    } catch (error) {
-      console.error(`❌ Error checking floor price for ${slug}:`, error.message);
-    }
-  }
 
   async checkCollectionAlert(alert, currentFloorPrice) {
-    const { condition, price: alertPrice, userId, id: alertId } = alert;
+    const { condition, price: alertPrice, userId, id: alertId, collectionName, slug } = alert;
+    
+    console.log(`🔍 Checking alert ${alertId}: ${collectionName} (${slug}) - condition: ${condition}, alertPrice: ${alertPrice}, currentFloor: ${currentFloorPrice}`);
+    
     let triggered = false;
 
     if (condition === 'below' && currentFloorPrice < alertPrice) {
       triggered = true;
+      console.log(`✅ ALERT TRIGGERED! ${collectionName} floor ${currentFloorPrice} ETH is BELOW ${alertPrice} ETH`);
     } else if (condition === 'above' && currentFloorPrice > alertPrice) {
       triggered = true;
+      console.log(`✅ ALERT TRIGGERED! ${collectionName} floor ${currentFloorPrice} ETH is ABOVE ${alertPrice} ETH`);
+    } else {
+      console.log(`❌ Alert NOT triggered: ${collectionName} floor ${currentFloorPrice} ETH is NOT ${condition} ${alertPrice} ETH`);
     }
 
     if (triggered) {
-      console.log(`🚨 ALERT TRIGGERED! ${alert.collectionName} floor ${currentFloorPrice} ETH is ${condition} ${alertPrice} ETH`);
+      console.log(`🚨 SENDING ALERT for ${collectionName} - floor ${currentFloorPrice} ETH vs alert ${alertPrice} ETH`);
       await this.sendCollectionAlert(alert, currentFloorPrice);
       
       // Deactivate the alert after triggering
       if (alert.mode !== 'repeat') {
+        console.log(`🔄 Deactivating alert ${alertId} (mode: ${alert.mode})`);
         await this.alertsDb.updateAlert(userId, alertId, { active: false, triggeredAt: new Date().toISOString() });
+      } else {
+        console.log(`🔄 Keeping alert ${alertId} active (repeat mode)`);
       }
     }
   }
@@ -165,7 +172,7 @@ class AlertsMonitor {
         timestamp: new Date().toISOString()
       };
 
-      await channel.send({ content: `<@${alert.userId}>`, embeds: [embed] });
+      await channel.send({ content: `<@${alert.userId}> 🚨 **Collection Alert Triggered!**`, embeds: [embed] });
       console.log(`✅ Collection alert sent to user ${alert.username}`);
     } catch (error) {
       console.error('❌ Error sending collection alert:', error.message);
@@ -234,14 +241,19 @@ class AlertsMonitor {
         if (!byToken.has(key)) byToken.set(key, []);
         byToken.get(key).push(alert);
       }
+      
+      console.log(`🔍 Token listing monitoring: ${byToken.size} unique tokens to check`);
 
       for (const [key, alerts] of byToken) {
         const [chain, contract, tokenId] = key.split('|');
+        console.log(`🔍 Checking token ${contract}/${tokenId} on ${chain} - ${alerts.length} alerts`);
+        
         const lowest = await this.fetchTokenLowestListingPrice(chain, contract, tokenId);
         if (lowest == null) {
-          // no active listings
+          console.log(`⚠️ No active listings for ${contract}/${tokenId} on ${chain}`);
           // Trigger any_listing if listing disappeared? No. Only when new listing appears; handled on next cycles
         } else {
+          console.log(`💰 Found listing for ${contract}/${tokenId} on ${chain}: ${lowest} ETH`);
           for (const alert of alerts) {
             await this.evaluateTokenListingAlert(alert, lowest);
           }
@@ -293,19 +305,32 @@ class AlertsMonitor {
   }
 
   async evaluateTokenListingAlert(alert, lowestPrice) {
-    const { condition, price: alertPrice, userId, id: alertId } = alert;
+    const { condition, price: alertPrice, userId, id: alertId, nftName, tokenId } = alert;
+    
+    console.log(`🔍 Checking token alert ${alertId}: ${nftName} (${tokenId}) - condition: ${condition}, alertPrice: ${alertPrice}, lowestListing: ${lowestPrice}`);
+    
     let triggered = false;
     let alertType = 'LISTED';
 
-    if (condition === 'any_listing' && lowestPrice != null) triggered = true;
+    if (condition === 'any_listing' && lowestPrice != null) {
+      triggered = true; 
+      console.log(`✅ TOKEN ALERT TRIGGERED! ${nftName} - ANY LISTING at ${lowestPrice} ETH`);
+    }
     if (condition === 'listed_below' && lowestPrice != null && alertPrice != null && lowestPrice < alertPrice) {
-      triggered = true; alertType = 'LISTED BELOW';
+      triggered = true; 
+      alertType = 'LISTED BELOW';
+      console.log(`✅ TOKEN ALERT TRIGGERED! ${nftName} - LISTED BELOW ${alertPrice} ETH at ${lowestPrice} ETH`);
     }
     if (condition === 'listed_above' && lowestPrice != null && alertPrice != null && lowestPrice > alertPrice) {
-      triggered = true; alertType = 'LISTED ABOVE';
+      triggered = true; 
+      alertType = 'LISTED ABOVE';
+      console.log(`✅ TOKEN ALERT TRIGGERED! ${nftName} - LISTED ABOVE ${alertPrice} ETH at ${lowestPrice} ETH`);
     }
 
-    if (!triggered) return;
+    if (!triggered) {
+      console.log(`❌ Token alert NOT triggered: ${nftName} - condition not met`);
+      return;
+    }
 
     // Prepare lightweight transaction-like data for embed
     const txData = {
@@ -437,7 +462,7 @@ class AlertsMonitor {
         });
       }
 
-      await channel.send({ content: `<@${alert.userId}>`, embeds: [embed] });
+      await channel.send({ content: `<@${alert.userId}> 🚨 **Token Alert Triggered!**`, embeds: [embed] });
       console.log(`✅ Token alert sent to user ${alert.username}`);
     } catch (error) {
       console.error('❌ Error sending token alert:', error.message);
