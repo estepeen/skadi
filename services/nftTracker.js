@@ -1309,7 +1309,20 @@ class NFTTracker {
             if (group.length >= 2) {
               // Build synthetic bulk event from the group
               const base = group[0];
-              const isMintGroup = group.every(e => e.event_type === 'mint');
+              // Detect mint groups not only by explicit 'mint' type, but also
+              // by OpenSea 'sale' events where the seller is the NFT contract
+              // and the buyer is our tracked wallet (typical mint pattern)
+              const walletAddressLower = walletInfo.address.toLowerCase();
+              const isMintGroup = group.every(e => {
+                if (e.event_type === 'mint') return true;
+                if (e.event_type === 'sale') {
+                  const contract = e?.nft?.contract && typeof e.nft.contract === 'string' ? e.nft.contract.toLowerCase() : '';
+                  const seller = typeof e?.seller === 'string' ? e.seller.toLowerCase() : '';
+                  const buyer = typeof e?.buyer === 'string' ? e.buyer.toLowerCase() : '';
+                  return Boolean(contract) && seller === contract && buyer === walletAddressLower;
+                }
+                return false;
+              });
 
               // Aggregate items and price
               const nfts = group
@@ -1451,6 +1464,17 @@ class NFTTracker {
             isPurchase = true;
             console.log(`   ✅ Detected PURCHASE: ${walletInfo.name} bought NFT`);
           }
+          // Reclassify mints reported as sales: seller == NFT contract and buyer == our wallet
+          try {
+            const contractLower = nft?.contract && typeof nft.contract === 'string' ? nft.contract.toLowerCase() : '';
+            const sellerLower = typeof event.seller === 'string' ? event.seller.toLowerCase() : '';
+            const buyerLower = typeof event.buyer === 'string' ? event.buyer.toLowerCase() : '';
+            if (!isMint && contractLower && sellerLower === contractLower && buyerLower === walletAddress) {
+              isMint = true;
+              isPurchase = false;
+              console.log(`   🔄 Reclassified as MINT: sale where seller is contract and buyer is wallet`);
+            }
+          } catch {}
         }
         if (eventType === 'mint') {
           // Kontrola mint (STPN je recipient)
