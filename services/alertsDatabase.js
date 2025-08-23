@@ -81,7 +81,6 @@ class AlertsDatabase {
       await this.saveToFile();
       console.log(`✅ Alert ${alert.id} added to database for user ${alert.username}`);
       console.log(`📊 Database now has ${this.alerts.size} users with alerts`);
-      const userAlerts = this.alerts.get(userId);
       console.log(`📊 User ${alert.username} now has ${userAlerts.length} alerts`);
       return true;
     } catch (error) {
