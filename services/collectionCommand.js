@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const fetch = require('node-fetch');
 const config = require('../config');
 
@@ -41,7 +41,7 @@ class CollectionCommand {
     try {
       const sub = interaction.options.getSubcommand();
       if (sub !== 'collection') {
-        await interaction.reply({ content: '❌ Unknown check subcommand.', flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: '❌ Unknown check subcommand.', ephemeral: true });
         return;
       }
 
@@ -281,7 +281,7 @@ class CollectionCommand {
       
       // Try to send error message
       try {
-        await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: errorMessage, ephemeral: true });
       } catch (replyError) {
         console.error('❌ Could not send error message:', replyError.message);
       }
