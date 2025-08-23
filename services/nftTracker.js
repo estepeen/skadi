@@ -438,6 +438,116 @@ class NFTTracker {
     }
   }
 
+  async getMintPriceForNFT(contract, tokenId, chainName) {
+    try {
+      const apiKey = config.opensea.apiKey;
+      
+      // Map chain names to OpenSea chain identifiers
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract',
+        'ApeChain': 'ape_chain'
+      };
+      
+      const chain = chainMap[chainName];
+      
+      if (!chain) {
+        console.log(`⚠️ No OpenSea chain mapping for ${chainName}`);
+        return { price: 0, priceUSD: 0 };
+      }
+      
+      console.log(`🔍 Fetching mint price for NFT ${contract}/${tokenId} on ${chainName}...`);
+      
+      // Use OpenSea API V2 Events endpoint for specific NFT with mint filter
+      const params = new URLSearchParams();
+      params.append('event_type', 'mint');
+      params.set('limit', '100'); // Get enough events to find the first mint
+      
+      const url = `https://api.opensea.io/api/v2/events/chain/${chain}/contract/${contract}/nfts/${tokenId}?${params}`;
+      
+      const response = await fetch(url, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        console.log(`⚠️ OpenSea API V2 returned status ${response.status} for mint events`);
+        return { price: 0, priceUSD: 0 };
+      }
+      
+      const json = await response.json();
+      const events = Array.isArray(json.events) ? json.events
+                   : Array.isArray(json.asset_events) ? json.asset_events
+                   : [];
+      
+      if (events.length === 0) {
+        console.log(`⚠️ No mint events found for NFT ${contract}/${tokenId}`);
+        return { price: 0, priceUSD: 0 };
+      }
+      
+      // Sort by time (ascending) and take the first mint
+      events.sort((a, b) => new Date(a.occurred_at || a.event_timestamp) - new Date(b.occurred_at || b.event_timestamp));
+      const evt = events[0];
+      
+      const parsePayment = (e) => {
+        // Method 1: payment.quantity with payment.decimals
+        if (e?.payment?.quantity) {
+          const dec = Number(e.payment.decimals ?? 18);
+          return { 
+            native: Number(e.payment.quantity) / (10 ** dec), 
+            usd: Number(e.payment.usd_amount ?? 0) 
+          };
+        }
+        
+        // Method 2: sale_price with payment_token.decimals
+        if (e?.sale_price != null) {
+          const dec = Number(e?.payment_token?.decimals ?? 18);
+          return { 
+            native: Number(e.sale_price) / (10 ** dec), 
+            usd: Number(e?.payment?.usd_amount ?? 0) 
+          };
+        }
+        
+        // Method 3: price.value with price.currency.decimals
+        if (e?.price?.value != null) {
+          const dec = Number(e?.price?.currency?.decimals ?? 18);
+          const native = Number(e.price.value) / (10 ** dec);
+          const usd = (Number(e?.price?.currency?.usd_price ?? 0) || 0) * native;
+          return { native, usd };
+        }
+        
+        return { native: 0, usd: 0 };
+      };
+      
+      const price = parsePayment(evt);
+      
+      if (price.native > 0) {
+        console.log(`✅ Found mint price for NFT: ${price.native} ETH ($${price.usd})`);
+      } else {
+        console.log(`⚠️ Mint event found but no price data (likely free mint)`);
+      }
+      
+      return { 
+        price: price.native, 
+        priceUSD: price.usd, 
+        occurred_at: evt.occurred_at || evt.event_timestamp, 
+        tx_hash: evt?.transaction?.hash || null 
+      };
+      
+    } catch (error) {
+      console.error('Error getting mint price for NFT:', error.message);
+      return { price: 0, priceUSD: 0 };
+    }
+  }
+
   async getTransactionData(txHash, chainName) {
     try {
       const apiKey = config.opensea.apiKey;
@@ -469,41 +579,83 @@ class NFTTracker {
       
       console.log(`🔍 Fetching transaction data for ${txHash} on ${chainName} via OpenSea API V2...`);
       
-      // Use OpenSea API V2 to get transaction details
-      const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${chain}/transaction/${txHash}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.asset_events && data.asset_events.length > 0) {
-          // Find the main transfer event
-          const transferEvent = data.asset_events.find(event => 
-            event.event_type === 'item_transferred' || 
-            event.event_type === 'item_sold'
-          );
-          
-          if (transferEvent) {
-            const price = transferEvent.payment?.amount ? 
-              Number(transferEvent.payment.amount) / Math.pow(10, transferEvent.payment.decimals || 18) : 0;
-            const priceUSD = transferEvent.payment?.usd_amount || 0;
-            
-            console.log(`✅ Found transaction data: ${price} ETH ($${priceUSD})`);
-            
-            return {
-              price: price,
-              priceUSD: priceUSD,
-              gasUsed: 0, // OpenSea API V2 doesn't provide gas info
-              gasPrice: 0
-            };
+      // Try OpenSea API V2 for transaction events
+      try {
+        const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${chain}/transaction/${txHash}`, {
+          headers: {
+            'X-API-KEY': apiKey,
+            'Accept': 'application/json'
           }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const events = Array.isArray(data.events) ? data.events
+                       : Array.isArray(data.asset_events) ? data.asset_events
+                       : [];
+          
+          if (events.length > 0) {
+            // Find mint, sale, or transfer event
+            const targetEvent = events.find(event => 
+              event.event_type === 'mint' || 
+              event.event_type === 'sale' ||
+              event.event_type === 'item_transferred' || 
+              event.event_type === 'item_sold'
+            );
+            
+            if (targetEvent) {
+              const parsePayment = (e) => {
+                // Method 1: payment.quantity with payment.decimals
+                if (e?.payment?.quantity) {
+                  const dec = Number(e.payment.decimals ?? 18);
+                  return { 
+                    native: Number(e.payment.quantity) / (10 ** dec), 
+                    usd: Number(e.payment.usd_amount ?? 0) 
+                  };
+                }
+                
+                // Method 2: sale_price with payment_token.decimals
+                if (e?.sale_price != null) {
+                  const dec = Number(e?.payment_token?.decimals ?? 18);
+                  return { 
+                    native: Number(e.sale_price) / (10 ** dec), 
+                    usd: Number(e?.payment?.usd_amount ?? 0) 
+                  };
+                }
+                
+                // Method 3: price.value with price.currency.decimals
+                if (e?.price?.value != null) {
+                  const dec = Number(e?.price?.currency?.decimals ?? 18);
+                  const native = Number(e.price.value) / (10 ** dec);
+                  const usd = (Number(e?.price?.currency?.usd_price ?? 0) || 0) * native;
+                  return { native, usd };
+                }
+                
+                return { native: 0, usd: 0 };
+              };
+              
+              const price = parsePayment(targetEvent);
+              
+              if (price.native > 0) {
+                console.log(`✅ Found transaction data via OpenSea API V2: ${price.native} ETH ($${price.usd})`);
+                
+                return {
+                  price: price.native,
+                  priceUSD: price.usd,
+                  gasUsed: 0,
+                  gasPrice: 0
+                };
+              }
+            }
+          }
+        } else {
+          console.log(`⚠️ OpenSea API V2 returned status ${response.status}`);
         }
-      } else {
-        console.log(`⚠️ OpenSea API V2 returned status ${response.status}`);
+      } catch (error) {
+        console.log(`⚠️ OpenSea API V2 failed: ${error.message}`);
       }
+      
+      console.log(`❌ No transaction data found via OpenSea API V2`);
       
       // Fallback: return default values
       return {
@@ -513,7 +665,7 @@ class NFTTracker {
         gasPrice: 0
       };
     } catch (error) {
-      console.error('Error getting transaction data via OpenSea API V2:', error.message);
+      console.error('Error getting transaction data:', error.message);
       return {
         price: 0,
         priceUSD: 0,
@@ -1376,12 +1528,19 @@ class NFTTracker {
               } else if (isBulkSale) {
                 // This is a bulk sale - wallet is selling multiple NFTs
                 await this.handleBulkSaleEvent(syntheticEvent, walletInfo);
-              } else if (isBulkPurchase) {
-                // This is a bulk purchase - wallet is buying multiple NFTs
+              } else if (isBulkPurchase && !isMintGroup) {
+                // This is a bulk purchase - wallet is buying multiple NFTs (but not minting)
                 await this.handleBulkPurchaseEvent(syntheticEvent, walletInfo);
+              } else if (isBulkPurchase && isMintGroup) {
+                // This is a bulk mint - wallet is minting multiple NFTs
+                await this.handleBulkMintEvent(syntheticEvent, walletInfo);
               } else {
-                // Fallback to old logic
-                await this.handleBulkPurchaseEvent(syntheticEvent, walletInfo);
+                // Fallback: if we can't determine, assume it's a mint if it's a mint group
+                if (isMintGroup) {
+                  await this.handleBulkMintEvent(syntheticEvent, walletInfo);
+                } else {
+                  await this.handleBulkPurchaseEvent(syntheticEvent, walletInfo);
+                }
               }
 
               // Update last processed timestamp from group
@@ -1529,8 +1688,8 @@ class NFTTracker {
       const isBulk = this.isBulkEvent(event);
       console.log(`   Multiplicity check → isBulk=${isBulk}`);
       // Bulk handling for PURCHASE, MINT and SALE sweeps
-      if (isBulk && isPurchase) {
-        await this.handleBulkEvent(event, walletInfo);
+      if (isBulk && isPurchase && !isMint) {
+        await this.handleBulkPurchaseEvent(event, walletInfo);
         return;
       } else if (isBulk && isMint) {
         await this.handleBulkMintEvent(event, walletInfo);
@@ -1586,14 +1745,24 @@ class NFTTracker {
         }
       }
 
-      // Special handling for MINT: if still no price, get from chain tx value via *scan proxy
-      if (isMint && price === 0 && event.transaction) {
-        const txData = await this.getTransactionData(event.transaction, chainName);
-        if (txData) {
-          price = txData.price || 0;
-          priceUSD = txData.priceUSD || 0;
+      // Special handling for MINT: get mint price via OpenSea API V2
+      if (isMint && price === 0) {
+        // First try to get mint price for specific NFT
+        const mintPrice = await this.getMintPriceForNFT(nft.contract, nft.identifier, chainName);
+        if (mintPrice.price > 0) {
+          price = mintPrice.price;
+          priceUSD = mintPrice.priceUSD;
           nativeSymbol = nativeSymbol || this.getNativeTokenSymbol(chainName);
-          console.log(`   Mint Price via chain tx: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
+          console.log(`   Mint Price via NFT events: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
+        } else if (event.transaction) {
+          // Fallback to transaction-based lookup
+          const txData = await this.getTransactionData(event.transaction, chainName);
+          if (txData) {
+            price = txData.price || 0;
+            priceUSD = txData.priceUSD || 0;
+            nativeSymbol = nativeSymbol || this.getNativeTokenSymbol(chainName);
+            console.log(`   Mint Price via transaction: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
+          }
         }
       }
 
@@ -1619,6 +1788,7 @@ class NFTTracker {
 
 
       // Sestavení transactionData
+      console.log(`   🔍 Final transaction type determination: isMint=${isMint}, isPurchase=${isPurchase}, isSale=${isSale}`);
       const transactionData = {
         type: isMint ? 'mint' : (isPurchase ? 'purchase' : 'sale'),
         walletName: walletInfo.name,

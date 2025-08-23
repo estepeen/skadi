@@ -14,10 +14,12 @@ class AlertsMonitor {
   }
 
   async initialize() {
+    console.log('🔧 Initializing Alerts Monitor...');
     const success = await this.alertsDb.initialize();
     if (success) {
       this.initialized = true;
       console.log('✅ Alerts Monitor initialized');
+      console.log('🔧 Starting periodic monitoring...');
       
       // Start periodic floor price monitoring
       this.startFloorPriceMonitoring();
@@ -33,6 +35,8 @@ class AlertsMonitor {
     // Check floor prices every 1 minute
     setInterval(() => {
       console.log('⏰ Floor price monitoring interval triggered');
+      console.log(`🔍 AlertsMonitor initialized: ${this.initialized}`);
+      console.log(`🔍 Database initialized: ${this.alertsDb.initialized}`);
       this.checkAllCollectionAlerts();
     }, 60 * 1000);
     
@@ -49,13 +53,22 @@ class AlertsMonitor {
   }
 
   async checkAllCollectionAlerts() {
-    if (!this.initialized) return;
+    if (!this.initialized) {
+      console.log('❌ AlertsMonitor not initialized, skipping collection alerts check');
+      return;
+    }
 
     try {
       const allAlerts = this.alertsDb.getActiveAlerts();
-      const collectionAlerts = allAlerts.filter(alert => alert.type === 'collection');
+      console.log(`🔍 Total active alerts: ${allAlerts.length}`);
       
-      if (collectionAlerts.length === 0) return;
+      const collectionAlerts = allAlerts.filter(alert => alert.type === 'collection');
+      console.log(`🔍 Collection alerts found: ${collectionAlerts.length}`);
+      
+      if (collectionAlerts.length === 0) {
+        console.log('⚠️ No collection alerts to check');
+        return;
+      }
 
       console.log(`🔍 Checking ${collectionAlerts.length} collection alerts for floor price changes...`);
 
@@ -213,6 +226,7 @@ class AlertsMonitor {
       }
 
       const data = await response.json();
+      console.log(`📊 OpenSea API response for ${slug}:`, JSON.stringify(data, null, 2));
       const floorPrice = data.total?.floor_price;
 
       if (floorPrice && floorPrice > 0) {
@@ -226,6 +240,7 @@ class AlertsMonitor {
         return floorPrice;
       } else {
         console.log(`⚠️ No floor price data for ${slug} on ${chain}`);
+        console.log(`📊 Response structure:`, JSON.stringify(data, null, 2));
       }
     } catch (error) {
       console.error(`❌ Error fetching floor price for ${slug} on ${chain}:`, error.message);
