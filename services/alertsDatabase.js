@@ -80,6 +80,9 @@ class AlertsDatabase {
 
       await this.saveToFile();
       console.log(`✅ Alert ${alert.id} added to database for user ${alert.username}`);
+      console.log(`📊 Database now has ${this.alerts.size} users with alerts`);
+      const userAlerts = this.alerts.get(userId);
+      console.log(`📊 User ${alert.username} now has ${userAlerts.length} alerts`);
       return true;
     } catch (error) {
       console.error('❌ Error adding alert to database:', error.message);
@@ -179,7 +182,10 @@ class AlertsDatabase {
   }
 
   getActiveAlerts() {
-    return this.getAllAlerts().filter(alert => alert.active !== false);
+    const allAlerts = this.getAllAlerts();
+    const activeAlerts = allAlerts.filter(alert => alert.active !== false);
+    console.log(`📊 Database: ${allAlerts.length} total alerts, ${activeAlerts.length} active alerts`);
+    return activeAlerts;
   }
 
   async updateAlert(userId, alertId, updates) {
