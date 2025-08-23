@@ -1,4 +1,4 @@
-const { Collection, MessageFlags } = require('discord.js');
+const { Collection } = require('discord.js');
 const CollectionCommand = require('./collectionCommand');
 const AlertsCommand = require('./alertsCommand');
 
@@ -52,7 +52,7 @@ class CommandManager {
       const available = Array.from(this.commands.keys());
       console.error(`❌ Unknown command: ${commandName}. Available: ${available.join(', ') || '(none)'}`);
       try {
-        await interaction.reply({ content: '⚠️ Commands are updating. Please try again in a moment.', flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: '⚠️ Commands are updating. Please try again in a moment.', ephemeral: true });
       } catch {}
       return;
     }
@@ -67,7 +67,7 @@ class CommandManager {
       if (interaction.deferred) {
         await interaction.editReply({ content: errorMessage });
       } else {
-        await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: errorMessage, ephemeral: true });
       }
     }
   }
