@@ -305,14 +305,22 @@ class AlertsCommand {
     const channelManager = discordNotifier?.getChannelManager();
     
     if (!channelManager) {
-      await interaction.editReply({ content: '❌ Channel manager not available. Please try again later.', embeds: [] });
+      try {
+        await interaction.editReply({ content: '❌ Channel manager not available. Please try again later.', embeds: [] });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
     // Vytvoř nebo získej uživatelský kanál
     const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
-      await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
+      try {
+        await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -394,7 +402,20 @@ class AlertsCommand {
     // Always show image at the bottom
     embed.setImage(collectionData.image_url || 'https://via.placeholder.com/800x600?text=Collection+Image');
 
-    await interaction.editReply({ content: '', embeds: [embed] });
+    try {
+      await interaction.editReply({ content: '', embeds: [embed] });
+    } catch (replyError) {
+      console.error(`❌ Could not send success response: ${replyError.message}`);
+      // Try to follow up if the interaction has expired
+      try {
+        await interaction.followUp({ 
+          content: `✅ Collection alert created successfully for ${collectionData.name}!`, 
+          ephemeral: true 
+        });
+      } catch (followUpError) {
+        console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
+      }
+    }
   }
 
   async handleTokenAlert(interaction) {
@@ -416,14 +437,22 @@ class AlertsCommand {
     const channelManager = discordNotifier?.getChannelManager();
     
     if (!channelManager) {
-      await interaction.editReply({ content: '❌ Channel manager not available. Please try again later.', embeds: [] });
+      try {
+        await interaction.editReply({ content: '❌ Channel manager not available. Please try again later.', embeds: [] });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
     // Vytvoř nebo získej uživatelský kanál
     const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
-      await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
+      try {
+        await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -862,10 +891,23 @@ class AlertsCommand {
         await interaction.editReply({ content: '', embeds: [embed] });
       } catch (error) {
         console.error(`❌ Error removing channel: ${error.message}`);
-        await interaction.editReply({ 
-          content: '❌ Failed to remove your alerts channel. Please try again later.', 
-          embeds: [] 
-        });
+        try {
+          if (interaction.replied && !interaction.deferred) {
+            // Try to edit the reply
+            await interaction.editReply({ 
+              content: '❌ Failed to remove your alerts channel. Please try again later.', 
+              embeds: [] 
+            });
+          } else {
+            // Try to follow up if the interaction has expired
+            await interaction.followUp({ 
+              content: '❌ Failed to remove your alerts channel. Please try again later.', 
+              ephemeral: true 
+            });
+          }
+        } catch (replyError) {
+          console.error(`❌ Could not send error response: ${replyError.message}`);
+        }
       }
     }
   }
@@ -927,10 +969,23 @@ class AlertsCommand {
       await interaction.editReply({ content: '', embeds: [embed] });
     } catch (error) {
       console.error('❌ Error showing alerts stats:', error.message);
-      await interaction.editReply({ 
-        content: '❌ Failed to retrieve alerts statistics.', 
-        embeds: [] 
-      });
+      try {
+        if (interaction.replied && !interaction.deferred) {
+          // Try to edit the reply
+          await interaction.editReply({ 
+            content: '❌ Failed to retrieve alerts statistics.', 
+            embeds: [] 
+          });
+        } else {
+          // Try to follow up if the interaction has expired
+          await interaction.followUp({ 
+            content: '❌ Failed to retrieve alerts statistics.', 
+            ephemeral: true 
+          });
+        }
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
     }
   }
 
