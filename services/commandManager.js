@@ -3,9 +3,10 @@ const CollectionCommand = require('./collectionCommand');
 const AlertsCommand = require('./alertsCommand');
 
 class CommandManager {
-  constructor() {
+  constructor(alertsDatabase = null) {
     this.commands = new Collection();
     this.initialized = false;
+    this.alertsDatabase = alertsDatabase;
   }
 
   async initialize() {
@@ -22,7 +23,7 @@ class CommandManager {
     this.commands.set(collectionCommand.getCommandData().name, collectionCommand);
 
     // Register alerts command and initialize its database
-    const alertsCommand = new AlertsCommand();
+    const alertsCommand = new AlertsCommand(this.alertsDatabase);
     await alertsCommand.initialize();
     this.commands.set(alertsCommand.getCommandData().name, alertsCommand);
   }

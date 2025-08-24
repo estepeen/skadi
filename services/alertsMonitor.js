@@ -3,8 +3,8 @@ const fetch = require('node-fetch');
 const config = require('../config');
 
 class AlertsMonitor {
-  constructor(discordNotifier) {
-    this.alertsDb = new AlertsDatabase();
+  constructor(discordNotifier, alertsDatabase = null) {
+    this.alertsDb = alertsDatabase || new AlertsDatabase();
     this.discordNotifier = discordNotifier;
     this.initialized = false;
     this.lastFloorPriceCheck = new Map(); // slug -> timestamp
