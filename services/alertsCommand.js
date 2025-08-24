@@ -4,8 +4,8 @@ const config = require('../config');
 const AlertsDatabase = require('./alertsDatabase');
 
 class AlertsCommand {
-  constructor() {
-    this.alertsDb = new AlertsDatabase();
+  constructor(alertsDatabase = null) {
+    this.alertsDb = alertsDatabase || new AlertsDatabase();
   }
 
   async initialize() {

@@ -4,6 +4,7 @@ const CommandManager = require('./commandManager');
 const CryptoPriceService = require('./cryptoPriceService');
 const ChannelManager = require('./channelManager');
 const AlertsMonitor = require('./alertsMonitor');
+const AlertsDatabase = require('./alertsDatabase');
 
 class DiscordNotifier {
   constructor() {
@@ -15,10 +16,14 @@ class DiscordNotifier {
     });
     
     this.isReady = false;
-    this.commandManager = new CommandManager();
+    
+    // Create shared AlertsDatabase instance
+    this.alertsDatabase = new AlertsDatabase();
+    
+    this.commandManager = new CommandManager(this.alertsDatabase);
     this.cryptoPriceService = new CryptoPriceService();
     this.channelManager = new ChannelManager(this.client);
-    this.alertsMonitor = new AlertsMonitor(this);
+    this.alertsMonitor = new AlertsMonitor(this, this.alertsDatabase);
     this.setupEventHandlers();
   }
 

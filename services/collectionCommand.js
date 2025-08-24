@@ -1,10 +1,12 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const fetch = require('node-fetch');
 const config = require('../config');
+const CryptoPriceService = require('./cryptoPriceService');
 
 class CollectionCommand {
   constructor() {
     // No need to initialize NFTTracker for this command
+    this.cryptoPriceService = new CryptoPriceService();
   }
 
   getCommandData() {
@@ -128,6 +130,21 @@ class CollectionCommand {
       const marketCap = stats?.total?.market_cap ?? null;
       const averagePrice = stats?.total?.average_price ?? null;
 
+      // Convert market cap to USD if available
+      let marketCapUSD = null;
+      if (marketCap !== null && marketCap !== undefined) {
+        try {
+          const cryptoPrices = await this.cryptoPriceService.fetchPrices();
+          const ethPrice = cryptoPrices['ETH']?.price;
+          if (ethPrice) {
+            marketCapUSD = marketCap * ethPrice;
+            console.log(`🔍 Market cap conversion: ${marketCap} ETH × $${ethPrice} = $${marketCapUSD.toLocaleString()}`);
+          }
+        } catch (error) {
+          console.log(`⚠️ Could not convert market cap to USD: ${error.message}`);
+        }
+      }
+
       // Time intervals
       const intervals = stats?.intervals ?? [];
       const oneDay = intervals.find(i => i.interval === 'one_day');
@@ -212,7 +229,7 @@ class CollectionCommand {
       // 3. řádek
       embed.addFields(
         { name: '📈 Total Volume', value: `${fmtEth(totalVolume)} (${fmt(totalSales)} sales)`, inline: true },
-        { name: '💎 Market Cap', value: fmtEth(marketCap), inline: true },
+        { name: '💎 Market Cap', value: marketCapUSD ? `$${fmt(marketCapUSD)}` : fmtEth(marketCap), inline: true },
         { name: '📅 Created', value: createdDate || '—', inline: true }
       );
 
