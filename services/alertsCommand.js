@@ -563,7 +563,20 @@ class AlertsCommand {
     if (nft.image_url) {
       embed.setImage(nft.image_url);
     }
-    await interaction.editReply({ content: '', embeds: [embed] });
+    try {
+      await interaction.editReply({ content: '', embeds: [embed] });
+    } catch (replyError) {
+      console.error(`❌ Could not send success response: ${replyError.message}`);
+      // Try to follow up if the interaction has expired
+      try {
+        await interaction.followUp({ 
+          content: `✅ Token alert created successfully for ${nft.name}!`, 
+          ephemeral: true 
+        });
+      } catch (followUpError) {
+        console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
+      }
+    }
   }
 
   async handleTraitsAlert(interaction) {
@@ -585,9 +598,13 @@ class AlertsCommand {
     try {
       traits = this.parseTraits(traitsInput);
     } catch (error) {
-      await interaction.editReply({ 
-        content: `❌ **Invalid traits format**\nUse format: \`trait_type:value,trait_type:value\`\nExample: \`Background:Blue,Eyes:Laser\``
-      });
+      try {
+        await interaction.editReply({ 
+          content: `❌ **Invalid traits format**\nUse format: \`trait_type:value,trait_type:value\`\nExample: \`Background:Blue,Eyes:Laser\``
+        });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -598,9 +615,13 @@ class AlertsCommand {
     });
 
     if (!collectionRes.ok) {
-      await interaction.editReply({ 
-        content: `❌ **Collection not found**: \`${slug}\`\nPlease check the collection slug.`
-      });
+      try {
+        await interaction.editReply({ 
+          content: `❌ **Collection not found**: \`${slug}\`\nPlease check the collection slug.`
+        });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -615,13 +636,21 @@ class AlertsCommand {
     const channelManager = discordNotifier?.getChannelManager();
     
     if (!channelManager) {
-      await interaction.editReply({ content: '❌ Channel manager not available. Please try again later.', embeds: [] });
+      try {
+        await interaction.editReply({ content: '❌ Channel manager not available. Please try again later.', embeds: [] });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
     const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
-      await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
+      try {
+        await interaction.editReply({ content: '❌ Failed to create your alerts channel. Please try again later.', embeds: [] });
+      } catch (replyError) {
+        console.error(`❌ Could not send error response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -680,7 +709,20 @@ class AlertsCommand {
     // Always show image at the bottom
     embed.setImage(collectionData.image_url || 'https://via.placeholder.com/800x600?text=Collection+Image');
 
-    await interaction.editReply({ content: '', embeds: [embed] });
+    try {
+      await interaction.editReply({ content: '', embeds: [embed] });
+    } catch (replyError) {
+      console.error(`❌ Could not send success response: ${replyError.message}`);
+      // Try to follow up if the interaction has expired
+      try {
+        await interaction.followUp({ 
+          content: `✅ Traits alert created successfully for ${collectionData.name}!`, 
+          ephemeral: true 
+        });
+      } catch (followUpError) {
+        console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
+      }
+    }
   }
 
   async handleListAlerts(interaction) {
@@ -688,10 +730,14 @@ class AlertsCommand {
     const userAlerts = this.alertsDb.getUserAlerts(userId);
     
     if (userAlerts.length === 0) {
-      await interaction.editReply({ 
-        content: `📋 **Your Active Alerts**\n\n❌ You don't have any active alerts.\n\n💡 **Create your first alert:**\n• \`/alerts collection\` - Set floor price alerts\n• \`/alerts token\` - Set specific NFT alerts\n• \`/alerts traits\` - Set trait-based alerts`,
-        embeds: []
-      });
+      try {
+        await interaction.editReply({ 
+          content: `📋 **Your Active Alerts**\n\n❌ You don't have any active alerts.\n\n💡 **Create your first alert:**\n• \`/alerts collection\` - Set floor price alerts\n• \`/alerts token\` - Set specific NFT alerts\n• \`/alerts traits\` - Set trait-based alerts`,
+          embeds: []
+        });
+      } catch (replyError) {
+        console.error(`❌ Could not send response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -774,7 +820,11 @@ class AlertsCommand {
       inline: false
     });
 
-    await interaction.editReply({ content: '', embeds: [embed] });
+    try {
+      await interaction.editReply({ content: '', embeds: [embed] });
+    } catch (replyError) {
+      console.error(`❌ Could not send response: ${replyError.message}`);
+    }
   }
 
   async handleRemoveAlert(interaction) {
@@ -785,7 +835,11 @@ class AlertsCommand {
     if (input.trim() === '-1') {
       const removedCount = await this.alertsDb.removeAllActiveUserAlerts(userId);
       if (removedCount === 0) {
-        await interaction.editReply({ content: '📋 You have no active alerts to remove.', embeds: [] });
+        try {
+          await interaction.editReply({ content: '📋 You have no active alerts to remove.', embeds: [] });
+        } catch (replyError) {
+          console.error(`❌ Could not send response: ${replyError.message}`);
+        }
         return;
       }
       const embedAll = new EmbedBuilder()
@@ -794,7 +848,11 @@ class AlertsCommand {
         .setColor(0xff6b6b)
         .setTimestamp()
         .setFooter({ text: 'Skadi NFT Tracker' });
-      await interaction.editReply({ content: '', embeds: [embedAll] });
+      try {
+        await interaction.editReply({ content: '', embeds: [embedAll] });
+      } catch (replyError) {
+        console.error(`❌ Could not send response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -810,10 +868,14 @@ class AlertsCommand {
     }
 
     if (results.removed.length === 0) {
-      await interaction.editReply({ 
-        content: `❌ **No matching alerts found**\nIDs: \`${ids.join(', ')}\`\n\nUse \`/alerts list\` to view your active alerts.`,
-        embeds: []
-      });
+      try {
+        await interaction.editReply({ 
+          content: `❌ **No matching alerts found**\nIDs: \`${ids.join(', ')}\`\n\nUse \`/alerts list\` to view your active alerts.`,
+          embeds: []
+        });
+      } catch (replyError) {
+        console.error(`❌ Could not send response: ${replyError.message}`);
+      }
       return;
     }
 
@@ -828,7 +890,11 @@ class AlertsCommand {
       embed.addFields({ name: 'Not found', value: results.notFound.map(id => `\`${id}\``).join(', ').slice(0, 1000), inline: false });
     }
 
-    await interaction.editReply({ content: '', embeds: [embed] });
+    try {
+      await interaction.editReply({ content: '', embeds: [embed] });
+    } catch (replyError) {
+      console.error(`❌ Could not send response: ${replyError.message}`);
+    }
   }
 
   parseTraits(traitsInput) {
@@ -932,10 +998,14 @@ class AlertsCommand {
       const alertsMonitor = discordNotifier?.getAlertsMonitor();
       
       if (!alertsMonitor) {
-        await interaction.editReply({ 
-          content: '❌ Alerts monitoring system not available.', 
-          embeds: [] 
-        });
+        try {
+          await interaction.editReply({ 
+            content: '❌ Alerts monitoring system not available.', 
+            embeds: [] 
+          });
+        } catch (replyError) {
+          console.error(`❌ Could not send error response: ${replyError.message}`);
+        }
         return;
       }
 
@@ -966,7 +1036,20 @@ class AlertsCommand {
         .setTimestamp()
         .setFooter({ text: 'Skadi NFT Tracker • Alerts System' });
 
-      await interaction.editReply({ content: '', embeds: [embed] });
+      try {
+        await interaction.editReply({ content: '', embeds: [embed] });
+      } catch (replyError) {
+        console.error(`❌ Could not send success response: ${replyError.message}`);
+        // Try to follow up if the interaction has expired
+        try {
+          await interaction.followUp({ 
+            content: '✅ Alerts statistics retrieved successfully!', 
+            ephemeral: true 
+          });
+        } catch (followUpError) {
+          console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
+        }
+      }
     } catch (error) {
       console.error('❌ Error showing alerts stats:', error.message);
       try {
