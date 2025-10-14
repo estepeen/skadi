@@ -22,6 +22,13 @@ class NFTTracker {
     
     // No more purchases.json dependency - we always fetch from OpenSea API
     console.log('✅ NFT Tracker initialized without purchases.json dependency');
+    
+    // Log ignored collections at startup
+    if (this.config.ignoredCollections && this.config.ignoredCollections.length > 0) {
+      console.log(`🚫 NFT Tracker: ${this.config.ignoredCollections.length} ignored collections loaded:`, this.config.ignoredCollections);
+    } else {
+      console.log('ℹ️ NFT Tracker: No collections in ignore list');
+    }
   }
 
   async initialize(wallets) {
@@ -3036,6 +3043,30 @@ class NFTTracker {
     console.log(`   💰 Average PnL: ${avgPnL > 0 ? '+' : ''}${avgPnL.toFixed(6)} ${nativeSymbol} (${itemsWithPnL}/${quantity} items with PnL data)`);
     console.log(`   ⏱️ Average hold time: ${holdTimeDisplay}`);
     await this.sendDiscordNotification(transactionData, this);
+  }
+
+  /**
+   * Reload config to get updated ignored collections
+   * Called by /ignore command when collections are modified
+   */
+  reloadConfig() {
+    try {
+      // Clear require cache for config
+      const configPath = require.resolve('../config');
+      delete require.cache[configPath];
+      
+      // Reload config
+      this.config = require('../config');
+      
+      console.log('🔄 NFT Tracker: Config reloaded with updated ignore list');
+      if (this.config.ignoredCollections && this.config.ignoredCollections.length > 0) {
+        console.log(`🚫 NFT Tracker: ${this.config.ignoredCollections.length} ignored collections:`, this.config.ignoredCollections);
+      } else {
+        console.log('ℹ️ NFT Tracker: No collections in ignore list');
+      }
+    } catch (error) {
+      console.error('❌ NFT Tracker: Error reloading config:', error.message);
+    }
   }
 }
 

@@ -344,6 +344,20 @@ class IgnoreCommand {
       
       console.log('🔄 Config reloaded with updated ignore list');
       console.log('📋 Current ignored collections:', config.ignoredCollections);
+      
+      // Also reload NFTTracker config
+      try {
+        const { getNFTTracker } = require('../index');
+        const nftTracker = getNFTTracker();
+        if (nftTracker && nftTracker.reloadConfig) {
+          nftTracker.reloadConfig();
+          console.log('✅ NFTTracker config reloaded successfully');
+        } else {
+          console.log('⚠️ NFTTracker not available for reload');
+        }
+      } catch (nftError) {
+        console.error('❌ Error reloading NFTTracker config:', nftError.message);
+      }
     } catch (error) {
       console.error('❌ Error reloading config:', error.message);
     }
