@@ -1,0 +1,13 @@
+# 🚫 Ignored NFT Collections
+# Add collection slugs here (one per line)
+# Lines starting with # are comments and will be ignored
+# 
+# How to find collection slug:
+# - Go to OpenSea: https://opensea.io/collection/SLUG
+# - The slug is the last part of the URL
+# 
+# Example collections to ignore (remove the # to activate):
+# farmingcollection
+# airdrop-nft
+# spam-collection
+

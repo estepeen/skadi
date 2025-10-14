@@ -1,6 +1,7 @@
 const { Collection } = require('discord.js');
 const CollectionCommand = require('./collectionCommand');
 const AlertsCommand = require('./alertsCommand');
+const IgnoreCommand = require('./ignoreCommand');
 
 class CommandManager {
   constructor(alertsDatabase = null) {
@@ -26,6 +27,11 @@ class CommandManager {
     const alertsCommand = new AlertsCommand(this.alertsDatabase);
     await alertsCommand.initialize();
     this.commands.set(alertsCommand.getCommandData().name, alertsCommand);
+
+    // Register ignore command (admin only)
+    const ignoreCommand = new IgnoreCommand();
+    this.commands.set(ignoreCommand.getCommandData().name, ignoreCommand);
+    console.log('✅ Registered /ignore command');
   }
 
   getCommands() {

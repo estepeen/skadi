@@ -1675,6 +1675,18 @@ class NFTTracker {
         return;
       }
 
+      // 🚫 CHECK FOR IGNORED COLLECTIONS
+      const collectionSlug = (event.collection || '').toLowerCase();
+      
+      // Check if collection is in ignore list
+      if (this.config.ignoredCollections && 
+          this.config.ignoredCollections.length > 0 && 
+          collectionSlug && 
+          this.config.ignoredCollections.includes(collectionSlug)) {
+        console.log(`   🚫 Skipping ignored collection: ${collectionSlug}`);
+        return;
+      }
+
       // Deduplicate by transaction hash to prevent multiple messages for the same sweep
       if (typeof txHashForDedup === 'string' && txHashForDedup.length > 0) {
         if (this.processedOpenSeaTxs.has(txHashForDedup)) {
