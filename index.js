@@ -4,6 +4,11 @@ const config = require('./config');
 
 let nftTracker = null;
 
+// Export function to get NFTTracker instance for other modules
+function getNFTTracker() {
+  return nftTracker;
+}
+
 async function main() {
   try {
     console.log('🚀 Starting NFT Tracker Bot...');
@@ -37,6 +42,12 @@ async function main() {
   }
 }
 
+// Export the getter functions
+module.exports = {
+  getNFTTracker,
+  getDiscordNotifier
+};
+
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down NFT Tracker Bot...');
@@ -58,8 +69,6 @@ process.on('SIGTERM', async () => {
 function getDiscordNotifier() {
   return nftTracker?.discordNotifier;
 }
-
-module.exports = { getDiscordNotifier };
 
 // Start the bot
 main(); 
