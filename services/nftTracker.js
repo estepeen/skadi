@@ -1678,6 +1678,10 @@ class NFTTracker {
       // 🚫 CHECK FOR IGNORED COLLECTIONS
       const collectionSlug = (event.collection || '').toLowerCase();
       
+      // DEBUG: Log collection info for debugging
+      console.log(`   🔍 DEBUG: Collection slug: "${collectionSlug}"`);
+      console.log(`   🔍 DEBUG: Ignored collections: [${(this.config.ignoredCollections || []).join(', ')}]`);
+      
       // Check if collection is in ignore list
       if (this.config.ignoredCollections && 
           this.config.ignoredCollections.length > 0 && 
