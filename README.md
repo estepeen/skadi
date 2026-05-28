@@ -1,51 +1,51 @@
 # NFT Tracker Bot
 
-Bot pro sledování NFT transakcí na více blockchain sítích pomocí OpenSea API V2.
+A bot for tracking NFT transactions across multiple blockchain networks using the OpenSea API V2.
 
-## Funkce
+## Features
 
-- 🔍 Sledování nákupů NFT
-- 🔍 Sledování prodejů NFT  
-- 🔍 Sledování mintování NFT
-- 📊 **Multichain podpora**: Ethereum, Base, Polygon, Arbitrum, Optimism, BSC, Avalanche, Berachain, Abstract
-- 📁 Načítání peněženek z CSV souboru
-- ⏱️ Konfigurovatelný interval skenování
-- 🤖 Discord notifikace s embed zprávami
-- 💰 Výpočet PnL (profit/loss) pro prodeje
+- 🔍 NFT purchase tracking
+- 🔍 NFT sale tracking
+- 🔍 NFT mint tracking
+- 📊 **Multichain support**: Ethereum, Base, Polygon, Arbitrum, Optimism, BSC, Avalanche, Berachain, Abstract
+- 📁 Loading wallets from a CSV file
+- ⏱️ Configurable scan interval
+- 🤖 Discord notifications with embed messages
+- 💰 PnL (profit/loss) calculation for sales
 
-## Podporované blockchain sítě
+## Supported blockchain networks
 
-### ✅ **Plně podporované:**
-- **Ethereum** - hlavní síť
-- **Base** - L2 síť
+### ✅ **Fully supported:**
+- **Ethereum** - mainnet
+- **Base** - L2 network
 
-### ✅ **Rozšířená podpora:**
-- **Polygon** - L2 síť
-- **Arbitrum** - L2 síť  
-- **Optimism** - L2 síť
+### ✅ **Extended support:**
+- **Polygon** - L2 network
+- **Arbitrum** - L2 network
+- **Optimism** - L2 network
 - **BSC** - Binance Smart Chain
-- **Avalanche** - C_Chain
-- **Berachain** - nová L1 síť
-- **Abstract** - nová L1 síť
+- **Avalanche** - C-Chain
+- **Berachain** - new L1 network
+- **Abstract** - new L1 network
 
-### 🔧 **Co funguje na každé síti:**
-- ✅ Sledování transakcí přes OpenSea API V2
-- ✅ NFT metadata přes OpenSea API V2
-- ✅ Floor prices přes OpenSea API V2
-- ✅ Ceny kryptoměn přes CoinGecko
-- ✅ Discord notifikace s chain emoji
-- ✅ Explorer odkazy
+### 🔧 **What works on every network:**
+- ✅ Transaction tracking via OpenSea API V2
+- ✅ NFT metadata via OpenSea API V2
+- ✅ Floor prices via OpenSea API V2
+- ✅ Crypto prices via CoinGecko
+- ✅ Discord notifications with chain emoji
+- ✅ Explorer links
 
-## Instalace
+## Installation
 
-1. Nainstalujte závislosti:
+1. Install the dependencies:
 ```bash
 npm install
 ```
 
-2. Vytvořte `.env` soubor s vašimi API klíči:
+2. Create a `.env` file with your API keys:
 ```env
-# OpenSea API Key (povinné)
+# OpenSea API Key (required)
 OPENSEA_API_KEY=your_opensea_api_key_here
 
 # Discord Configuration
@@ -57,94 +57,94 @@ DISCORD_NFTS_ROLE_ID=your_nfts_role_id_here
 SCAN_INTERVAL=30000
 ```
 
-3. Upravte `wallets.csv` soubor s peněženkami ke sledování:
+3. Edit the `wallets.csv` file with the wallets to track:
 ```csv
 address,name
 0x834711F749fe36dc4A5aE135267b88d0aaaD8F3d,STPN
 0x1234567890abcdef1234567890abcdef12345678,Wallet2
 ```
 
-## Použití
+## Usage
 
-Spusťte bot:
+Start the bot:
 ```bash
 npm start
 ```
 
-Pro vývoj s automatickým restartem:
+For development with automatic restart:
 ```bash
 npm run dev
 ```
 
-Pro testování Discord notifikací:
+To test Discord notifications:
 ```bash
 node test.js
 ```
 
-## Struktura projektu
+## Project structure
 
 ```
 nft-tracker/
-├── index.js              # Hlavní soubor aplikace
-├── config.js             # Konfigurace
-├── package.json          # Závislosti
-├── wallets.csv           # Seznam peněženek
-├── test.js               # Test Discord notifikací
+├── index.js              # Main application file
+├── config.js             # Configuration
+├── package.json          # Dependencies
+├── wallets.csv           # Wallet list
+├── test.js               # Discord notification test
 ├── utils/
-│   └── csvReader.js      # Čtení CSV souboru
+│   └── csvReader.js      # CSV file reader
 └── services/
-    ├── nftTracker.js     # Hlavní logika sledování
-    └── discordNotifier.js # Discord notifikace
+    ├── nftTracker.js     # Core tracking logic
+    └── discordNotifier.js # Discord notifications
 ```
 
-## Konfigurace
+## Configuration
 
-- `SCAN_INTERVAL`: Interval skenování v milisekundách (výchozí: 30000ms = 30s)
-- `OPENSEA_API_KEY`: OpenSea API klíč pro metadata, floor prices a transakce (povinné)
+- `SCAN_INTERVAL`: Scan interval in milliseconds (default: 30000ms = 30s)
+- `OPENSEA_API_KEY`: OpenSea API key for metadata, floor prices and transactions (required)
 - `DISCORD_BOT_TOKEN`: Discord bot token
-- `DISCORD_CHANNEL_ID`: ID kanálu pro notifikace
-- `DISCORD_NFTS_ROLE_ID`: ID role pro notifikace o NFT (volitelné)
+- `DISCORD_CHANNEL_ID`: Channel ID for notifications
+- `DISCORD_NFTS_ROLE_ID`: Role ID for NFT notifications (optional)
 
-## Výstup
+## Output
 
-Bot bude v konzoli zobrazovat:
-- 🟢 NFT PURCHASED - když peněženka koupí NFT
-- 🔴 NFT SOLD - když peněženka prodá NFT
-- 🟡 NFT MINTED - když peněženka mintuje NFT
-- Odkazy na příslušné blockchain explorery pro každou transakci
+The bot will display in the console:
+- 🟢 NFT PURCHASED - when a wallet buys an NFT
+- 🔴 NFT SOLD - when a wallet sells an NFT
+- 🟡 NFT MINTED - when a wallet mints an NFT
+- Links to the relevant blockchain explorers for each transaction
 
-**Discord notifikace:**
-- Embed zprávy s barevným kódováním (zelená = nákup, červená = prodej, oranžová = mint)
-- Detailní informace o transakci včetně PnL
-- Přímé odkazy na blockchain explorery
-- Floor prices z OpenSea API V2
-- Chain emoji pro každou síť
+**Discord notifications:**
+- Embed messages with color coding (green = purchase, red = sale, orange = mint)
+- Detailed transaction information including PnL
+- Direct links to blockchain explorers
+- Floor prices from OpenSea API V2
+- Chain emoji for each network
 
 ## Discord Setup
 
-1. Vytvořte Discord aplikaci na https://discord.com/developers/applications
-2. Vytvořte bot pro vaši aplikaci
-3. Zkopírujte bot token do `.env` souboru
-4. Přidejte bot do vašeho serveru s oprávněními:
+1. Create a Discord application at https://discord.com/developers/applications
+2. Create a bot for your application
+3. Copy the bot token into the `.env` file
+4. Add the bot to your server with permissions:
    - Send Messages
    - Embed Links
    - Read Message History
-5. Zkopírujte ID kanálu pro notifikace do `.env` souboru
-6. Volitelně nastavte ID role pro NFT notifikace
+5. Copy the notification channel ID into the `.env` file
+6. Optionally set the role ID for NFT notifications
 
-## API Klíče
+## API Keys
 
 **OpenSea API V2:**
-- Získejte na https://docs.opensea.io/reference/api-overview
-- Používá se pro metadata NFT, floor prices a transakce na všech sítích
-- Povinné pro správné fungování bota
+- Get one at https://docs.opensea.io/reference/api-overview
+- Used for NFT metadata, floor prices and transactions on all networks
+- Required for the bot to work correctly
 
-## Poznámky
+## Notes
 
-- Bot sleduje pouze nové transakce od spuštění
-- Pro sledování historických transakcí je potřeba upravit logiku
-- Rate limiting je implementován pro respektování API limitů
-- Discord notifikace jsou volitelné - bot funguje i bez nich
-- PnL výpočty jsou založeny na datech z OpenSea API V2
-- Každá síť má vlastní explorer a marketplace odkazy
-- Bot nyní používá výhradně OpenSea API V2 pro všechny operace 
+- The bot only tracks new transactions from the moment it starts
+- Tracking historical transactions requires modifying the logic
+- Rate limiting is implemented to respect API limits
+- Discord notifications are optional - the bot works without them
+- PnL calculations are based on data from the OpenSea API V2
+- Each network has its own explorer and marketplace links
+- The bot now uses the OpenSea API V2 exclusively for all operations
