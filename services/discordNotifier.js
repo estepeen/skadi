@@ -1,4 +1,7 @@
 const { Client, GatewayIntentBits, EmbedBuilder, Events, MessageFlags } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const config = require('../config');
 const CommandManager = require('./commandManager');
 const CryptoPriceService = require('./cryptoPriceService');
@@ -28,7 +31,7 @@ class DiscordNotifier {
   }
 
   setupEventHandlers() {
-    this.client.on('ready', async () => {
+    this.client.once('ready', async () => {
       console.log(`🤖 Discord bot logged in as ${this.client.user.tag}`);
       this.isReady = true;
       
@@ -126,10 +129,24 @@ class DiscordNotifier {
 
   async registerSlashCommands() {
     try {
-      console.log('🔧 Registering slash commands (guild-scoped, clearing globals to avoid duplicates)...');
-      
       // Get all commands from command manager
       const commands = this.commandManager.getCommands();
+
+      // Skip re-registration when the command definitions haven't changed,
+      // to avoid burning Discord's rate limit on every restart.
+      const hashPath = path.join(__dirname, '..', 'data', '.commands-hash');
+      const currentHash = crypto.createHash('sha256')
+        .update(JSON.stringify(commands))
+        .digest('hex');
+      try {
+        const previousHash = fs.readFileSync(hashPath, 'utf8').trim();
+        if (previousHash === currentHash) {
+          console.log('✅ Slash command definitions unchanged, skipping registration');
+          return;
+        }
+      } catch {}
+
+      console.log('🔧 Registering slash commands (guild-scoped, clearing globals to avoid duplicates)...');
 
       // Clear GLOBAL commands to prevent duplicates with guild-scoped commands
       try {
@@ -153,7 +170,13 @@ class DiscordNotifier {
       } else {
         console.log('⚠️ No guilds in cache during command registration.');
       }
-      
+
+      try {
+        fs.mkdirSync(path.dirname(hashPath), { recursive: true });
+        fs.writeFileSync(hashPath, currentHash);
+      } catch (writeErr) {
+        console.log(`⚠️ Could not persist command hash: ${writeErr.message}`);
+      }
     } catch (error) {
       console.error('❌ Failed to register slash commands:', error);
     }
@@ -732,6 +755,9 @@ class DiscordNotifier {
   async disconnect() {
     if (this.cryptoPriceService) {
       this.cryptoPriceService.stopService();
+    }
+    if (this.alertsMonitor) {
+      this.alertsMonitor.stop();
     }
     if (this.commandManager) {
       await this.commandManager.cleanup();

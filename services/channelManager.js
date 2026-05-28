@@ -247,49 +247,6 @@ class ChannelManager {
     }
   }
 
-  async sendAlert(userId, alertEmbed) {
-    try {
-      const channelId = this.userChannels.get(userId);
-      if (!channelId) {
-        console.log(`⚠️ No channel found for user ${userId}`);
-        return false;
-      }
-
-      const channel = this.client.channels.cache.get(channelId);
-      if (!channel) {
-        console.log(`⚠️ Channel ${channelId} not found in cache`);
-        this.userChannels.delete(userId);
-        return false;
-      }
-
-      // Přidej mention do embedu
-      const alertMessage = `<@${userId}> 🚨 **Alert Triggered!**`;
-      
-      await channel.send({ 
-        content: alertMessage,
-        embeds: [alertEmbed] 
-      });
-
-      console.log(`✅ Alert sent to ${channel.name} for user ${userId}`);
-      return true;
-    } catch (error) {
-      console.log(`❌ Failed to send alert: ${error.message}`);
-      return false;
-    }
-  }
-
-  getUserChannelId(userId) {
-    return this.userChannels.get(userId);
-  }
-
-  getAllUserChannels() {
-    return new Map(this.userChannels);
-  }
-
-  removeUserChannel(userId) {
-    this.userChannels.delete(userId);
-  }
-
   async deleteUserChannel(userId, guildId) {
     try {
       const guild = this.client.guilds.cache.get(guildId);

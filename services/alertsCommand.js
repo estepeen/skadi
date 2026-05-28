@@ -267,9 +267,8 @@ class AlertsCommand {
           await this.handleStatsCommand(interaction);
           break;
         default:
-          await interaction.reply({ 
-            content: '❌ Unknown alert subcommand.', 
-            ephemeral: true 
+          await interaction.editReply({
+            content: '❌ Unknown alert subcommand.'
           });
       }
     } catch (error) {
@@ -300,7 +299,7 @@ class AlertsCommand {
 
     console.log(`🔍 Fetching collection data: ${slug} on ${chain}`);
 
-    // Získej channel manager z discord notifier
+    // Get channel manager from discord notifier
     const discordNotifier = require('../index').getDiscordNotifier();
     const channelManager = discordNotifier?.getChannelManager();
     
@@ -313,7 +312,7 @@ class AlertsCommand {
       return;
     }
 
-    // Vytvoř nebo získej uživatelský kanál
+    // Create or get the user's channel
     const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
       try {
@@ -432,7 +431,7 @@ class AlertsCommand {
     const tokenIds = tokenIdInput.split(',').map(s => s.trim()).filter(Boolean);
     console.log(`🔍 Fetching NFT data by slug: ${slug}/${tokenIds.join(',')} on ${chain}`);
 
-    // Získej channel manager z discord notifier
+    // Get channel manager from discord notifier
     const discordNotifier = require('../index').getDiscordNotifier();
     const channelManager = discordNotifier?.getChannelManager();
     
@@ -445,7 +444,7 @@ class AlertsCommand {
       return;
     }
 
-    // Vytvoř nebo získej uživatelský kanál
+    // Create or get the user's channel
     const userChannel = await channelManager.getUserChannel(userId, username, interaction.guildId);
     if (!userChannel) {
       try {
@@ -919,7 +918,7 @@ class AlertsCommand {
 
     console.log(`🔧 Channel management: ${action} for user ${username}`);
 
-    // Získej channel manager z discord notifier
+    // Get channel manager from discord notifier
     const discordNotifier = require('../index').getDiscordNotifier();
     const channelManager = discordNotifier?.getChannelManager();
     

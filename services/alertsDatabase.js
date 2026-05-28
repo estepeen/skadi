@@ -57,7 +57,10 @@ class AlertsDatabase {
         }
       }
 
-      await fs.writeFile(this.dbPath, JSON.stringify(alertsData, null, 2));
+      // Write to a temp file then rename so a crash mid-write can't corrupt the DB.
+      const tmpPath = `${this.dbPath}.tmp`;
+      await fs.writeFile(tmpPath, JSON.stringify(alertsData, null, 2));
+      await fs.rename(tmpPath, this.dbPath);
       return true;
     } catch (error) {
       console.error('❌ Error saving alerts database:', error.message);

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const fetch = require('node-fetch');
 const config = require('../config');
 const CryptoPriceService = require('./cryptoPriceService');
@@ -84,7 +84,7 @@ class CollectionCommand {
       }
       const stats = await statsRes.json();
 
-      // --- Parsing podle uživatelských požadavků ---
+      // --- Parsing per user requirements ---
       const name = collection?.name ?? slug;
       const createdDate = collection?.created_date ?? null;
       const totalSupply = collection?.total_supply ?? null;
@@ -181,11 +181,11 @@ class CollectionCommand {
       const fmtEth = (n) => {
         if (n === null || n === undefined) return '—';
         if (typeof n === 'number') {
-          // Pro ceny nižší než 0.01 zobrazuj 4 desetinná místa
+          // For prices below 0.01 show 4 decimal places
           if (n < 0.01) {
             return `${n.toFixed(4)} ${nativeSymbol}`;
           }
-          // Pro vyšší ceny zobrazuj 2 desetinná místa
+          // For higher prices show 2 decimal places
           return `${n.toFixed(2)} ${nativeSymbol}`;
         }
         return '—';
@@ -198,13 +198,13 @@ class CollectionCommand {
           .join('\n');
       };
 
-      // Create embed podle uživatelských požadavků
+      // Create embed per user requirements
       const embed = new EmbedBuilder()
         .setTitle(`📊 Collection ${name}`)
         .setURL(`https://opensea.io/collection/${slug}`)
         .setColor(0x00bfff);
 
-      // Description pod titulek (přímo text, bez názvu field)
+      // Description under the title (plain text, no field name)
       if (description) {
         const shortDesc = description.length > 1024
           ? description.substring(0, 1021) + '...'
@@ -212,28 +212,28 @@ class CollectionCommand {
         embed.setDescription(shortDesc);
       }
 
-      // 1. řádek
+      // Row 1
       embed.addFields(
         { name: '🎯 Floor Price', value: fmtEth(floor), inline: true },
         { name: '🪙 Creators Fee', value: feeList(creatorFees), inline: true },
         { name: '🔢 Total Supply', value: fmt(totalSupply), inline: true }
       );
 
-      // 2. řádek
+      // Row 2
       embed.addFields(
         { name: '📊 Average Price', value: fmtEth(averagePrice), inline: true },
         { name: '👥 Unique Holders', value: fmt(holders), inline: true },
         { name: '🔷 Chain', value: chain.toUpperCase(), inline: true }
       );
 
-      // 3. řádek
+      // Row 3
       embed.addFields(
         { name: '📈 Total Volume', value: `${fmtEth(totalVolume)} (${fmt(totalSales)} sales)`, inline: true },
         { name: '💎 Market Cap', value: marketCapUSD ? `$${fmt(marketCapUSD)}` : fmtEth(marketCap), inline: true },
         { name: '📅 Created', value: createdDate || '—', inline: true }
       );
 
-      // Volume Intervals (zkráceno na Volume)
+      // Volume Intervals (shortened to Volume)
       embed.addFields(
         { name: '⏰ Volume', value: 
           `1d: ${fmtEth(oneDay?.volume)} (${fmt(oneDay?.sales)} sales)\n` +

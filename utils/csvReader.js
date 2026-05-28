@@ -14,8 +14,12 @@ class CSVReader {
         .pipe(csv())
         .on('data', (row) => {
           if (row.address && row.name) {
+            if (!this.validateAddress(row.address.trim())) {
+              console.warn(`⚠️ Skipping invalid wallet address for "${row.name}": ${row.address}`);
+              return;
+            }
             wallets.push({
-              address: row.address.toLowerCase(),
+              address: row.address.trim().toLowerCase(),
               name: row.name
             });
           }
