@@ -69,7 +69,7 @@ class CommandManager {
     } catch (error) {
       console.error(`❌ Error executing command ${commandName}:`, error);
       
-      const errorMessage = '❌ Došlo k neočekávané chybě při spuštění příkazu.';
+      const errorMessage = '❌ An unexpected error occurred while running the command.';
       
       if (interaction.deferred) {
         await interaction.editReply({ content: errorMessage });
