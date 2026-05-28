@@ -2,6 +2,11 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
+if (!process.env.OPENSEA_API_KEY) {
+  console.error('❌ OPENSEA_API_KEY is not set. Add it to your .env file.');
+  process.exit(1);
+}
+
 /**
  * Load ignored collections from external file
  * @returns {Array<string>} Array of ignored collection slugs (lowercase)
@@ -40,7 +45,7 @@ module.exports = {
     nftsRoleId: process.env.DISCORD_NFTS_ROLE_ID
   },
   opensea: {
-    apiKey: process.env.OPENSEA_API_KEY || "REMOVED_ROTATED_KEY"
+    apiKey: process.env.OPENSEA_API_KEY
   },
   scanInterval: process.env.SCAN_INTERVAL ? parseInt(process.env.SCAN_INTERVAL) : 60000,
   csvFile: "wallets.csv",
