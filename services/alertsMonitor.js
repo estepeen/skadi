@@ -11,9 +11,15 @@ class AlertsMonitor {
     this.floorPriceCache = new Map(); // slug -> { price, timestamp }
     this.FLOOR_PRICE_CHECK_INTERVAL = 60 * 1000; // 1 minute
     this.FLOOR_PRICE_CACHE_DURATION = 60 * 1000; // 1 minute
+    this.floorPriceInterval = null;
+    this.tokenListingInterval = null;
   }
 
   async initialize() {
+    if (this.initialized) {
+      console.log('ℹ️ Alerts Monitor already initialized, skipping');
+      return true;
+    }
     console.log('🔧 Initializing Alerts Monitor...');
     const success = await this.alertsDb.initialize();
     if (success) {
@@ -32,24 +38,38 @@ class AlertsMonitor {
   }
 
   startFloorPriceMonitoring() {
+    if (this.floorPriceInterval) clearInterval(this.floorPriceInterval);
     // Check floor prices every 1 minute
-    setInterval(() => {
+    this.floorPriceInterval = setInterval(() => {
       console.log('⏰ Floor price monitoring interval triggered');
       console.log(`🔍 AlertsMonitor initialized: ${this.initialized}`);
       console.log(`🔍 Database initialized: ${this.alertsDb.initialized}`);
       this.checkAllCollectionAlerts();
     }, 60 * 1000);
-    
+
     console.log('🔄 Started periodic floor price monitoring (every 1 minute)');
   }
 
   startTokenListingMonitoring() {
+    if (this.tokenListingInterval) clearInterval(this.tokenListingInterval);
     // Check token listings every 1 minute
-    setInterval(() => {
+    this.tokenListingInterval = setInterval(() => {
       this.checkAllTokenListingAlerts();
     }, 60 * 1000);
 
     console.log('🔄 Started periodic token listing monitoring (every 1 minute)');
+  }
+
+  stop() {
+    if (this.floorPriceInterval) {
+      clearInterval(this.floorPriceInterval);
+      this.floorPriceInterval = null;
+    }
+    if (this.tokenListingInterval) {
+      clearInterval(this.tokenListingInterval);
+      this.tokenListingInterval = null;
+    }
+    console.log('🛑 Alerts Monitor stopped');
   }
 
   async checkAllCollectionAlerts() {
@@ -75,7 +95,7 @@ class AlertsMonitor {
       // Group alerts by collection slug to avoid duplicate API calls
       const alertsBySlug = new Map();
       for (const alert of collectionAlerts) {
-        const key = `${alert.slug}-${alert.chain}`;
+        const key = `${alert.slug}|${alert.chain}`;
         if (!alertsBySlug.has(key)) {
           alertsBySlug.set(key, []);
         }
@@ -84,7 +104,7 @@ class AlertsMonitor {
 
       // Check each unique collection
       for (const [slugChain, alerts] of alertsBySlug) {
-        const [slug, chain] = slugChain.split('-');
+        const [slug, chain] = slugChain.split('|');
         console.log(`🔍 Processing ${alerts.length} alerts for ${slug} on ${chain}`);
         
         const currentFloorPrice = await this.getCollectionFloorPrice(slug, chain);

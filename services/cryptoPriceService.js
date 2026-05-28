@@ -90,15 +90,15 @@ class CryptoPriceService {
       this.updatePresence(discordClient);
     }, 5 * 60 * 1000); // 5 minutes
 
-    // Rotate crypto every 5 seconds for testing (change to 5 minutes later)
+    // Rotate displayed crypto every 30 seconds
     this.rotationInterval = setInterval(() => {
       this.rotateCrypto();
       this.updatePresence(discordClient);
-    }, 5 * 1000); // 5 seconds for testing
+    }, 30 * 1000);
 
     console.log('✅ Crypto Price Service started');
     console.log('⏰ Prices update every 5 minutes');
-    console.log('🔄 Crypto rotation every 5 seconds (testing mode)');
+    console.log('🔄 Crypto rotation every 30 seconds');
   }
 
   updatePresence(discordClient) {

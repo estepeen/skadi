@@ -4,20 +4,42 @@ const fs = require('fs');
 const path = require('path');
 
 // Add fetch for Node.js versions that don't have it globally
-const fetch = require('node-fetch');
+const rawFetch = require('node-fetch');
+
+const FETCH_TIMEOUT_MS = 20000;
+
+// Wrap fetch with an abort-based timeout and a single 429 backoff retry.
+// A hung socket would otherwise stall the whole polling loop indefinitely.
+async function fetch(url, options = {}, _retried = false) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let res;
+  try {
+    res = await rawFetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (res.status === 429 && !_retried) {
+    const retryAfter = parseInt(res.headers.get('retry-after'), 10) || 2;
+    console.log(`⏳ OpenSea rate limit (429). Waiting ${retryAfter}s before retry: ${url}`);
+    await new Promise(r => setTimeout(r, retryAfter * 1000));
+    return fetch(url, options, true);
+  }
+  return res;
+}
 
 class NFTTracker {
   constructor() {
     this.config = config;
     
     this.trackedWallets = new Map(); // address -> { name, lastChecked }
-    this.lastTransactions = new Map(); // address -> last transaction hash
     this.discordNotifier = new DiscordNotifier();
     // Cache for native token USD prices to reduce CoinGecko calls and avoid rate limits
     this.nativeUsdCache = new Map(); // key: chainNameLower -> { price, ts }
     // Deduplication set for OpenSea transaction hashes to avoid duplicate notifications
     this.processedOpenSeaTxs = new Set();
-    
+    this.MAX_PROCESSED_TXS = 5000; // cap to prevent unbounded memory growth
+
     this.isInitialized = false;
     
     // No more purchases.json dependency - we always fetch from OpenSea API
@@ -80,326 +102,6 @@ class NFTTracker {
     console.log('🚀 NFT Tracker ready - will fetch purchase data from OpenSea API when needed');
     
     this.isInitialized = true;
-  }
-
-  async checkNFTTransfers(chain = 'ethereum') {
-    const chainName = chain === 'ethereum' ? 'Ethereum' : 'Base';
-    
-    console.log(`\nChecking ${chainName} NFT transfers...`);
-    
-    for (const [address, walletInfo] of this.trackedWallets) {
-      try {
-        await this.checkWalletNFTTransfers(address, walletInfo, chainName);
-        // Add small delay to avoid rate limiting
-        await this.sleep(100);
-      } catch (error) {
-        console.error(`Error checking wallet ${walletInfo.name}:`, error.message);
-      }
-    }
-  }
-
-  async checkWalletNFTTransfers(address, walletInfo, chainName) {
-    try {
-      // Get recent transactions from Etherscan/BaseScan
-      const transactions = await this.getRecentTransactions(address, chainName);
-      
-      for (const tx of transactions) {
-        const transferKey = `${address}-${tx.hash}`;
-        
-        // Check if we've already processed this transaction
-        if (!this.lastTransactions.has(transferKey)) {
-          this.lastTransactions.set(transferKey, true);
-          
-          // Analyze the transaction
-          await this.analyzeTransaction(tx, walletInfo, chainName);
-        }
-      }
-
-    } catch (error) {
-      console.error(`Error getting transfers for ${walletInfo.name}:`, error.message);
-    }
-  }
-
-  async getRecentTransactions(address, chainName) {
-    try {
-      const apiKey = config.opensea.apiKey;
-      
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract',
-        'ApeChain': 'ape_chain'
-      };
-      
-      const chain = chainMap[chainName];
-      
-      if (!chain) {
-        console.log(`⚠️ No OpenSea chain mapping for ${chainName}`);
-        return [];
-      }
-      
-      console.log(`🔍 Fetching recent transactions for ${address} on ${chainName} via OpenSea API V2...`);
-      
-      // Use OpenSea API V2 to get recent events for the wallet
-      const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${chain}/account/${address}?event_type=item_transferred&limit=10`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.asset_events && data.asset_events.length > 0) {
-          console.log(`✅ Found ${data.asset_events.length} recent events for ${address}`);
-          
-          // Convert OpenSea events to transaction format
-          return data.asset_events.map(event => ({
-            hash: event.transaction_hash,
-            from: event.seller?.address || event.from_account?.address,
-            to: event.buyer?.address || event.to_account?.address,
-            contractAddress: event.asset?.asset_contract?.address,
-            tokenId: event.asset?.token_id,
-            methodId: '0x23b872dd', // ERC-721 transfer
-            timestamp: event.event_timestamp,
-            price: event.payment?.amount ? Number(event.payment.amount) / Math.pow(10, event.payment.decimals || 18) : 0,
-            priceUSD: event.payment?.usd_amount || 0
-          }));
-        }
-      } else {
-        console.log(`⚠️ OpenSea API V2 returned status ${response.status}`);
-      }
-      
-      return [];
-    } catch (error) {
-      console.error('Error fetching recent transactions via OpenSea API V2:', error.message);
-      return [];
-    }
-  }
-
-  async analyzeTransaction(tx, walletInfo, chainName) {
-    try {
-      // Determine transaction type based on method ID
-      const methodId = tx.methodId;
-      let transactionType = 'unknown';
-      
-      if (methodId === '0x23b872dd') {
-        transactionType = 'transfer';
-      } else if (methodId === '0xf242432a') {
-        transactionType = 'transferFrom';
-      } else if (methodId === '0xa9059cbb') {
-        transactionType = 'transfer';
-      }
-      
-      if (transactionType === 'unknown') {
-        return;
-      }
-      
-      // Get transaction data
-      const transactionData = await this.getTransactionData(tx.hash, chainName);
-      
-      // Determine if this is a purchase or sale
-      const walletAddress = typeof walletInfo?.address === 'string' ? walletInfo.address.toLowerCase() : '';
-      const isPurchase = typeof tx.to === 'string' && tx.to.toLowerCase() === walletAddress;
-      const isSale = typeof tx.from === 'string' && tx.from.toLowerCase() === walletAddress;
-      
-      if (isPurchase) {
-        await this.analyzePurchase(tx, walletInfo, chainName, transactionData);
-      } else if (isSale) {
-        await this.analyzeSale(tx, walletInfo, chainName, transactionData);
-      }
-      
-    } catch (error) {
-      console.error('Error analyzing transaction:', error.message);
-    }
-  }
-
-  async analyzePurchase(tx, walletInfo, chainName, transactionData) {
-    const timestamp = new Date().toLocaleString();
-    
-    console.log(`\n🟢 NFT PURCHASED on ${chainName}`);
-    console.log(`Wallet: ${walletInfo.name} (${tx.to})`);
-    console.log(`From: ${tx.from}`);
-    console.log(`Transaction: https://${chainName.toLowerCase() === 'ethereum' ? 'etherscan.io' : 'basescan.org'}/tx/${tx.hash}`);
-    console.log(`Time: ${timestamp}`);
-    console.log('─'.repeat(50));
-
-    // Get NFT metadata
-    const nftMetadata = await this.getNFTMetadata(tx.contractAddress, tx.tokenId, chainName);
-    
-    // Get floor price from OpenSea
-    const floorPrice = await this.getFloorPrice(tx.contractAddress, chainName);
-    
-    // Get collection royalties info
-    let royaltiesInfo = null;
-    try {
-      const collectionInfo = await this.getCollectionInfo(tx.contractAddress, chainName);
-      if (collectionInfo && collectionInfo.slug) {
-        royaltiesInfo = await this.getCollectionRoyalties(collectionInfo.slug, chainName);
-      }
-    } catch (error) {
-      console.log(`⚠️ Could not fetch royalties info: ${error.message}`);
-    }
-    
-    // No need to store purchase data - we'll fetch it from OpenSea API when needed for PnL calculation
-    console.log('💾 Purchase data will be fetched from OpenSea API when needed for PnL calculation');
-    
-    // Prepare transaction data for alerts checking
-    const alertTransactionData = {
-      type: 'purchase',
-      walletName: walletInfo.name,
-      walletAddress: tx.to,
-      fromAddress: tx.from,
-      tokenName: nftMetadata.name || 'Unknown NFT',
-      tokenId: tx.tokenId,
-      contractAddress: tx.contractAddress,
-      transactionHash: tx.hash,
-      chainName: chainName,
-      timestamp: new Date(),
-      price: transactionData.price,
-      priceUSD: transactionData.priceUSD,
-      quantity: 1,
-      imageUrl: nftMetadata.imageUrl,
-      nftName: nftMetadata.name,
-      floorPrice: floorPrice,
-      royaltiesInfo: royaltiesInfo
-    };
-
-    // Check alerts for this transaction
-    const alertsMonitor = this.discordNotifier.getAlertsMonitor();
-    if (alertsMonitor) {
-      await alertsMonitor.checkTokenAlerts(alertTransactionData);
-    }
-
-    // Send Discord notification
-    await this.sendDiscordNotification(alertTransactionData);
-  }
-
-  async analyzeSale(tx, walletInfo, chainName, transactionData) {
-    const timestamp = new Date().toLocaleString();
-    
-    console.log(`\n🔴 NFT SOLD on ${chainName}`);
-    console.log(`Wallet: ${walletInfo.name} (${tx.from})`);
-    console.log(`To: ${tx.to}`);
-    console.log(`Transaction: https://${chainName.toLowerCase() === 'ethereum' ? 'etherscan.io' : 'basescan.org'}/tx/${tx.hash}`);
-    console.log(`Time: ${timestamp}`);
-    console.log('─'.repeat(50));
-
-    // Get NFT metadata
-    const nftMetadata = await this.getNFTMetadata(tx.contractAddress, tx.tokenId, chainName);
-    
-    // Get floor price from OpenSea
-    const floorPrice = await this.getFloorPrice(tx.contractAddress, chainName);
-    
-    // Get collection royalties info
-    let royaltiesInfo = null;
-    try {
-      const collectionInfo = await this.getCollectionInfo(tx.contractAddress, chainName);
-      if (collectionInfo && collectionInfo.slug) {
-        royaltiesInfo = await this.getCollectionRoyalties(collectionInfo.slug, chainName);
-      }
-    } catch (error) {
-      console.log(`⚠️ Could not fetch royalties info: ${error.message}`);
-    }
-    
-    // Always search for purchase data via OpenSea API for real-time accuracy
-    console.log(`🔍 Searching OpenSea API for purchase data for ${nftMetadata.name || `#${tx.tokenId}`}...`);
-    
-    let purchaseData = null;
-    let pnl = 0;
-    let pnlUSD = 0;
-    let holdTime = '-';
-    
-    try {
-      // Always search for purchase data via OpenSea API for real-time accuracy
-      console.log(`   🔍 Searching OpenSea API for purchase data...`);
-      purchaseData = await this.recoverPurchaseData(tx.contractAddress, tx.tokenId, tx.from, chainName);
-      
-      if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
-        console.log(`   ✅ Found purchase data via API: ${purchaseData.price} ETH`);
-        
-        // Calculate PnL if we have purchase data
-        if (transactionData.price > 0) {
-          pnl = transactionData.price - purchaseData.price;
-          pnlUSD = (transactionData.priceUSD || 0) - (purchaseData.priceUSD || 0);
-          
-          // Calculate hold time
-          if (purchaseData.timestamp) {
-            const saleTimestamp = new Date().getTime();
-            const holdTimeMs = saleTimestamp - purchaseData.timestamp;
-            if (holdTimeMs > 0) {
-              const holdTimeMinutes = Math.floor(holdTimeMs / (1000 * 60));
-              const holdTimeHours = Math.floor(holdTimeMs / (1000 * 60 * 60));
-              const holdTimeDays = Math.floor(holdTimeMs / (1000 * 60 * 60 * 24));
-              
-              if (holdTimeMinutes < 60) {
-                holdTime = `${holdTimeMinutes}min`;
-              } else if (holdTimeHours < 24) {
-                const hours = Math.floor(holdTimeHours);
-                const minutes = Math.floor(holdTimeMinutes % 60);
-                holdTime = `${hours}h ${minutes}min`;
-              } else {
-                const days = Math.floor(holdTimeDays);
-                if (days === 1) {
-                  holdTime = `${days} day`;
-                } else {
-                  holdTime = `${days} days`;
-                }
-              }
-            }
-          }
-          
-          console.log(`   💰 PnL for ${nftMetadata.name || `#${tx.tokenId}`}: ${pnl > 0 ? '+' : ''}${pnl.toFixed(6)} ETH`);
-          console.log(`   ⏱️ Hold time: ${holdTime}`);
-        }
-      } else {
-        console.log(`   ❌ No purchase data found for this NFT`);
-      }
-    } catch (error) {
-      console.error(`   ❌ Error finding purchase data:`, error.message);
-    }
-    
-    // Prepare transaction data for alerts checking
-    const alertTransactionData = {
-      type: 'sale',
-      walletName: walletInfo.name,
-      walletAddress: tx.from,
-      toAddress: tx.to,
-      tokenName: nftMetadata.name || 'Unknown NFT',
-      tokenId: tx.tokenId,
-      contractAddress: tx.contractAddress,
-      transactionHash: tx.hash,
-      chainName: chainName,
-      timestamp: new Date(),
-      price: transactionData.price,
-      priceUSD: transactionData.priceUSD,
-      quantity: 1,
-      imageUrl: nftMetadata.imageUrl,
-      nftName: nftMetadata.name,
-      floorPrice: floorPrice,
-      buyPrice: purchaseData?.price || 0,
-      buyPriceUSD: purchaseData?.priceUSD || 0,
-      buyTimestamp: purchaseData?.timestamp || null,
-      pnl: pnl,
-      pnlUSD: pnlUSD,
-      holdTime: holdTime,
-      royaltiesInfo: royaltiesInfo
-    };
-
-    // Check alerts for this transaction
-    const alertsMonitor = this.discordNotifier.getAlertsMonitor();
-    if (alertsMonitor) {
-      await alertsMonitor.checkTokenAlerts(alertTransactionData);
-    }
-
-    // Send Discord notification
-    await this.sendDiscordNotification(alertTransactionData);
   }
 
   async sleep(ms) {
@@ -848,19 +550,19 @@ class NFTTracker {
         }
       }
 
-      // Fallback hardcoded if all providers failed
+      // All providers failed — report price as unavailable (0) instead of
+      // fabricating a value, so USD/PnL are simply omitted downstream.
       if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
-        priceUsd = 2000;
+        console.warn(`⚠️ Native USD price unavailable for ${cacheKey} (all providers failed): ${lastError?.message || 'unknown'}`);
+        return 0; // don't cache the failure so the next call retries
       }
 
       // Store in cache and return
       this.nativeUsdCache.set(cacheKey, { price: priceUsd, ts: Date.now() });
       return priceUsd;
     } catch (error) {
-      // Quiet fallback to avoid log spam on rate limits
-      const fallback = 2000;
-      this.nativeUsdCache.set((chainName || 'ethereum').toLowerCase(), { price: fallback, ts: Date.now() });
-      return fallback;
+      console.warn(`⚠️ Native USD price lookup error for ${(chainName || 'ethereum')}: ${error.message}`);
+      return 0; // price unavailable; do not fabricate
     }
   }
 
@@ -1423,7 +1125,7 @@ class NFTTracker {
       
       console.log(`🔍 Checking ${walletInfo.name} activity on OpenSea (since: ${new Date(lastEventTimestamp * 1000).toISOString()})`);
       
-      // Požadovat sale, mint, bid_entered a bid_accepted eventy pro kompletní pokrytí
+      // Request sale, mint, bid_entered and bid_accepted events for complete coverage
       const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&event_type=bid_entered&event_type=bid_accepted&limit=20`, {
         headers: {
           'X-API-KEY': apiKey,
@@ -1436,14 +1138,14 @@ class NFTTracker {
         console.log(`✅ Found ${data.asset_events?.length || 0} sale/mint events for ${walletInfo.name}`);
         
         if (data.asset_events && data.asset_events.length > 0) {
-          // Seřadit events podle timestamp (nejstarší první)
+          // Sort events by timestamp (oldest first)
           const sortedEvents = data.asset_events.sort((a, b) => {
             const timestampA = typeof a.event_timestamp === 'number' ? a.event_timestamp : new Date(a.event_timestamp).getTime() / 1000;
             const timestampB = typeof b.event_timestamp === 'number' ? b.event_timestamp : new Date(b.event_timestamp).getTime() / 1000;
             return timestampA - timestampB;
           });
           
-          // Filtrovat pouze nové eventy (s větším timestampem než poslední zpracovaný)
+          // Filter only new events (with a larger timestamp than the last processed one)
           const newEvents = sortedEvents.filter(event => {
             const eventTimestamp = typeof event.event_timestamp === 'number' ? event.event_timestamp : new Date(event.event_timestamp).getTime() / 1000;
             return eventTimestamp > lastEventTimestamp;
@@ -1597,13 +1299,13 @@ class NFTTracker {
       console.log(`   Contract: ${nft?.contract || 'Unknown'}`);
       console.log(`   Token ID: ${nft?.identifier || 'Unknown'}`);
 
-      // Zpracovávej sale, mint, bid_entered a bid_accepted eventy
+      // Process sale, mint, bid_entered and bid_accepted events
       if (eventType !== 'sale' && eventType !== 'mint' && eventType !== 'bid_entered' && eventType !== 'bid_accepted') {
         console.log(`   ❌ Skipping - not a sale, mint, or bid event`);
         return;
       }
 
-      // Debug: vypiš všechny adresy
+      // Debug: print all addresses
       console.log(`   Debug - Seller: "${event.seller}"`);
       console.log(`   Debug - Buyer: "${event.buyer}"`);
       console.log(`   Debug - To: "${event.to_address}"`);
@@ -1612,7 +1314,7 @@ class NFTTracker {
       const walletAddress = typeof walletInfo?.address === 'string' ? walletInfo.address.toLowerCase() : '';
       console.log(`   Debug - Wallet: "${walletAddress}"`);
 
-      // Bezpečné určení typu s kontrolou undefined
+      // Safe type determination with undefined check
       let isSale = false;
       let isPurchase = false;
       let isMint = false;
@@ -1625,7 +1327,7 @@ class NFTTracker {
             isSale = true;
             console.log(`   ✅ Detected SALE: ${walletInfo.name} sold NFT`);
           }
-          // Kontrola nákupu (STPN je buyer)
+          // Purchase check (STPN is the buyer)
           if (typeof event.buyer === 'string' && event.buyer.toLowerCase() === walletAddress) {
             isPurchase = true;
             console.log(`   ✅ Detected PURCHASE: ${walletInfo.name} bought NFT`);
@@ -1650,23 +1352,23 @@ class NFTTracker {
           }
         }
         if (eventType === 'bid_accepted') {
-          // Kontrola přijetí bidu (STPN je maker/seller - přijal WETH bid)
+          // Bid acceptance check (STPN is maker/seller - accepted a WETH bid)
           if (typeof event.maker === 'string' && event.maker.toLowerCase() === walletAddress) {
             isSale = true;
             isBidAccepted = true;
             console.log(`   ✅ Detected BID ACCEPTED: ${walletInfo.name} accepted WETH bid for NFT`);
           }
-          // Kontrola nákupu přes bid (STPN je bidder - koupil NFT přes bid)
+          // Purchase-via-bid check (STPN is bidder - bought the NFT through a bid)
           if (typeof event.bidder === 'string' && event.bidder.toLowerCase() === walletAddress) {
             isPurchase = true;
             console.log(`   ✅ Detected BID PURCHASE: ${walletInfo.name} bought NFT via bid`);
           }
         }
         if (eventType === 'bid_entered') {
-          // Kontrola vložení bidu (STPN je bidder - vložil WETH bid)
+          // Bid-placement check (STPN is bidder - placed a WETH bid)
           if (typeof event.bidder === 'string' && event.bidder.toLowerCase() === walletAddress) {
             console.log(`   ℹ️ Detected BID ENTERED: ${walletInfo.name} placed WETH bid (not a transaction yet)`);
-            // Bid vložení není transakce, jen informace
+            // Placing a bid is not a transaction, just information
             return;
           }
         }
@@ -1705,6 +1407,10 @@ class NFTTracker {
           return;
         }
         this.processedOpenSeaTxs.add(txHashForDedup);
+        if (this.processedOpenSeaTxs.size > this.MAX_PROCESSED_TXS) {
+          const oldest = this.processedOpenSeaTxs.values().next().value;
+          this.processedOpenSeaTxs.delete(oldest);
+        }
       }
 
       // Decide between single vs. bulk transaction handling
@@ -1731,7 +1437,7 @@ class NFTTracker {
       let priceUSD = 0;
       let nativeSymbol = 'ETH';
 
-      // Pokud máme order hash, zkusíme detailní info
+      // If we have an order hash, try to fetch detailed info
       if (event.order_hash) {
         console.log(`   Order Hash: ${event.order_hash}`);
         const orderDetails = await this.getOrderDetails(event.order_hash, chainName);
@@ -1753,7 +1459,7 @@ class NFTTracker {
         console.log(`   Payment Price: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
       }
 
-      // Pro bid_accepted eventy: zkus získat cenu z bid data
+      // For bid_accepted events: try to get the price from the bid data
       if (isBidAccepted && price === 0 && event.bid) {
         try {
           if (event.bid.amount) {
@@ -1799,18 +1505,18 @@ class NFTTracker {
         return;
       }
 
-      // Metadata máme z eventu
+      // We already have metadata from the event
       const nftMetadata = {
         image_url: nft.image_url,
         name: nft.name
       };
 
-      // Floor price z OpenSea - použij slug pokud je dostupný
+      // Floor price from OpenSea - use slug if available
       const floorPrice = await this.getFloorPrice(nft.contract, chainName, nft.collection);
 
 
 
-      // Sestavení transactionData
+      // Build transactionData
       console.log(`   🔍 Final transaction type determination: isMint=${isMint}, isPurchase=${isPurchase}, isSale=${isSale}`);
       const transactionData = {
         type: isMint ? 'mint' : (isPurchase ? 'purchase' : 'sale'),
@@ -1833,7 +1539,7 @@ class NFTTracker {
         nftName: nft.name || `${nft.collection} #${nft.identifier}`,
         nativeSymbol: nativeSymbol,
         floorPrice: floorPrice,
-        isBidAccepted: isBidAccepted // Přidat flag pro bid accepted
+        isBidAccepted: isBidAccepted // Add flag for bid accepted
       };
 
       console.log(`   📊 Transaction Data: ${transactionData.type} - ${transactionData.nftName} for ${price} ${nativeSymbol}`);
@@ -1907,7 +1613,7 @@ class NFTTracker {
         }
       }
 
-      // Pro purchase/mint: neukládat pro PnL - budeme to tahat z OpenSea API
+      // For purchase/mint: don't store for PnL - we'll pull it from the OpenSea API
       if (isPurchase || isMint) {
         console.log(`   💾 Purchase data will be fetched from OpenSea API when needed for PnL calculation`);
       }
@@ -2413,7 +2119,7 @@ class NFTTracker {
     
     console.log(`🔍 Generating slugs for: "${cleanName}"`);
     
-    // Strategy 1: Convert to lowercase with hyphens (slova oddělená pomlčkami)
+    // Strategy 1: Convert to lowercase with hyphens (words separated by hyphens)
     const slug1 = cleanName
       .toLowerCase()
       .replace(/\s+/g, '-') // Replace spaces with hyphens
