@@ -200,8 +200,9 @@ class AlertsMonitor {
           }
         ],
         image: alert.image_url ? { url: alert.image_url } : undefined,
-        footer: {
-          text: '⚡ Powered by STPNGPT'
+        author: {
+          name: '⚡ Powered by STPNGPT',
+          url: 'https://github.com/estepeen'
         },
         timestamp: new Date().toISOString()
       };
@@ -489,8 +490,9 @@ class AlertsMonitor {
           }
         ],
         image: (transactionData.imageUrl || alert.image_url) ? { url: (transactionData.imageUrl || alert.image_url) } : undefined,
-        footer: {
-          text: '⚡ Powered by STPNGPT'
+        author: {
+          name: '⚡ Powered by STPNGPT',
+          url: 'https://github.com/estepeen'
         },
         timestamp: new Date().toISOString()
       };

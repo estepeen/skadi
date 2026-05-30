@@ -359,7 +359,7 @@ class DiscordNotifier {
       .setColor(color)
       .setTitle(displayTitle)
       .setTimestamp(new Date(timestamp))
-      .setFooter({ text: `⚡ Powered by STPNGPT` });
+      .setAuthor({ name: `⚡ Powered by STPNGPT`, url: 'https://github.com/estepeen' });
 
     // Row 1: Descriptive text
     const walletOpenSeaUrl = `https://opensea.io/${walletAddress}`;
