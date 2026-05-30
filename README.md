@@ -148,3 +148,14 @@ The bot will display in the console:
 - PnL calculations are based on data from the OpenSea API V2
 - Each network has its own explorer and marketplace links
 - The bot now uses the OpenSea API V2 exclusively for all operations
+
+## License
+
+Released under the MIT License with an attribution requirement — see
+[LICENSE](LICENSE).
+
+You are free to use, modify and distribute this software, provided that:
+
+- credit is given to the original author (Štěpán Panek / estepeen), and
+- the bot's own signature (the footer / "Powered by" text in its Discord
+  embed messages) is kept in place and not removed or altered.
