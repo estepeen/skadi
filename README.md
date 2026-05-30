@@ -60,7 +60,7 @@ SCAN_INTERVAL=30000
 3. Edit the `wallets.csv` file with the wallets to track:
 ```csv
 address,name
-0x834711F749fe36dc4A5aE135267b88d0aaaD8F3d,STPN
+0xabcdef0123456789abcdef0123456789abcdef01,Wallet1
 0x1234567890abcdef1234567890abcdef12345678,Wallet2
 ```
 
