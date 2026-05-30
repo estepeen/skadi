@@ -201,7 +201,7 @@ class AlertsMonitor {
         ],
         image: alert.image_url ? { url: alert.image_url } : undefined,
         author: {
-          name: '⚡ Powered by STPNGPT',
+          name: '⚡ Powered by STPN',
           url: 'https://github.com/estepeen'
         },
         timestamp: new Date().toISOString()
@@ -491,7 +491,7 @@ class AlertsMonitor {
         ],
         image: (transactionData.imageUrl || alert.image_url) ? { url: (transactionData.imageUrl || alert.image_url) } : undefined,
         author: {
-          name: '⚡ Powered by STPNGPT',
+          name: '⚡ Powered by STPN',
           url: 'https://github.com/estepeen'
         },
         timestamp: new Date().toISOString()

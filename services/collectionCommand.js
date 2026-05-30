@@ -245,7 +245,7 @@ class CollectionCommand {
 
 
 
-      embed.setAuthor({ name: `⚡ Powered by STPNGPT`, url: 'https://github.com/estepeen' })
+      embed.setAuthor({ name: `⚡ Powered by STPN`, url: 'https://github.com/estepeen' })
         .setFooter({ text: `/check collection ${slug}` })
         .setTimestamp();
 

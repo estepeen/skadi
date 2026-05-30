@@ -157,5 +157,5 @@ Released under the MIT License with an attribution requirement — see
 You are free to use, modify and distribute this software, provided that:
 
 - credit is given to the original author (STPN / estepeen), and
-- the bot's own signature (the footer / "Powered by" text in its Discord
-  embed messages) is kept in place and not removed or altered.
+- the bot's own signature (the "⚡ Powered by STPN" text and its link in its
+  Discord embed messages) is kept in place and not removed or altered.
