@@ -3,30 +3,9 @@ const DiscordNotifier = require('./discordNotifier');
 const fs = require('fs');
 const path = require('path');
 
-// Add fetch for Node.js versions that don't have it globally
-const rawFetch = require('node-fetch');
-
-const FETCH_TIMEOUT_MS = 20000;
-
-// Wrap fetch with an abort-based timeout and a single 429 backoff retry.
-// A hung socket would otherwise stall the whole polling loop indefinitely.
-async function fetch(url, options = {}, _retried = false) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let res;
-  try {
-    res = await rawFetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-  if (res.status === 429 && !_retried) {
-    const retryAfter = parseInt(res.headers.get('retry-after'), 10) || 2;
-    console.log(`⏳ OpenSea rate limit (429). Waiting ${retryAfter}s before retry: ${url}`);
-    await new Promise(r => setTimeout(r, retryAfter * 1000));
-    return fetch(url, options, true);
-  }
-  return res;
-}
+// Shared fetch wrapper (abort timeout + single 429 backoff retry). Aliased to
+// `fetch` so the existing call sites in this file stay unchanged.
+const { fetchWithRetry: fetch } = require('../utils/httpClient');
 
 class NFTTracker {
   constructor() {
@@ -46,6 +25,9 @@ class NFTTracker {
     this.COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000; // successful lookups
     this.COLLECTION_CACHE_NEGATIVE_TTL_MS = 60 * 1000; // transient failures shouldn't stick
     this.MAX_COLLECTION_CACHE = 500;
+    // Floor prices move far faster than names/images/socials, so they get their
+    // own, much tighter freshness bound inside the memoized collection record.
+    this.FLOOR_PRICE_TTL_MS = 60 * 1000;
 
     this.isInitialized = false;
     
@@ -126,6 +108,18 @@ class NFTTracker {
       console.log('✅ Discord notification sent successfully!');
     } catch (error) {
       console.error('❌ Failed to send Discord notification:', error.message);
+    }
+
+    // Transaction-driven token alerts. Without this the `sold` condition never
+    // fires — only the listing-driven polling loop reached the alerts monitor.
+    // Isolated so an alert failure can never break the notification path.
+    try {
+      const alertsMonitor = this.discordNotifier?.getAlertsMonitor?.();
+      if (alertsMonitor?.checkTokenAlerts) {
+        await alertsMonitor.checkTokenAlerts(transactionData);
+      }
+    } catch (error) {
+      console.error('❌ Failed to check token alerts:', error.message);
     }
   }
 
@@ -720,7 +714,9 @@ class NFTTracker {
           telegram_url: collectionData.telegram_url,
           instagram_username: collectionData.instagram_username,
           contracts: collectionData.contracts,
-          // Add stats data
+          // Add stats data. statsFetchedAt bounds the freshness of the stats
+          // block independently of the 10-minute record TTL — see getFreshFloorPrice.
+          statsFetchedAt: statsData ? Date.now() : 0,
           floor_price: statsData?.total?.floor_price,
           total_volume: statsData?.total?.volume,
           total_sales: statsData?.total?.sales,
@@ -861,6 +857,82 @@ class NFTTracker {
     }
   }
 
+  /**
+   * Fetch only the collection /stats endpoint and return its floor price.
+   * Much cheaper than re-resolving the whole collection record when the slow
+   * fields (name, image, socials, royalties) are still perfectly good.
+   */
+  async fetchFloorPriceFromStats(slug, chainName) {
+    try {
+      const apiKey = this.config.opensea.apiKey;
+
+      const chainMap = {
+        'Ethereum': 'ethereum',
+        'ApeChain': 'ape_chain',
+        'Base': 'base',
+        'Polygon': 'polygon',
+        'Arbitrum': 'arbitrum',
+        'Optimism': 'optimism',
+        'BSC': 'bsc',
+        'Berachain': 'berachain',
+        'Abstract': 'abstract'
+      };
+
+      const chain = chainMap[chainName] || 'ethereum';
+
+      const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
+        headers: {
+          'X-API-KEY': apiKey,
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        console.log(`⚠️ Floor price stats not available for ${slug}: ${response.status} ${response.statusText}`);
+        return null;
+      }
+
+      const data = await response.json();
+      const floor = data?.total?.floor_price;
+      if (Number.isFinite(floor) && floor > 0) {
+        return floor;
+      }
+      return null;
+    } catch (error) {
+      console.log(`⚠️ Error fetching floor price stats for ${slug}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Return a floor price that is at most FLOOR_PRICE_TTL_MS old. The collection
+   * record itself is memoized for 10 minutes, which is fine for names and links
+   * but reads as plain wrong for the floor on a fast-moving collection.
+   */
+  async getFreshFloorPrice(slug, chainName, collectionInfo) {
+    const statsAge = Date.now() - (collectionInfo?.statsFetchedAt || 0);
+    const memoizedFloor = collectionInfo?.floor_price;
+
+    if (Number.isFinite(memoizedFloor) && memoizedFloor > 0 && statsAge < this.FLOOR_PRICE_TTL_MS) {
+      return memoizedFloor;
+    }
+
+    console.log(`🔍 Memoized floor price for ${slug} is stale (${Math.round(statsAge / 1000)}s), refetching stats...`);
+    const freshFloor = await this.fetchFloorPriceFromStats(slug, chainName);
+
+    if (Number.isFinite(freshFloor) && freshFloor > 0) {
+      // Refresh the memoized record in place so concurrent readers within the
+      // window see the same value without another round trip.
+      if (collectionInfo) {
+        collectionInfo.floor_price = freshFloor;
+        collectionInfo.statsFetchedAt = Date.now();
+      }
+      return freshFloor;
+    }
+
+    return null;
+  }
+
   async getFloorPrice(contractAddress, chainName, collectionSlug = null) {
     try {
       const apiKey = config.opensea.apiKey;
@@ -886,10 +958,11 @@ class NFTTracker {
       if (collectionSlug) {
         console.log(`🔍 Strategy 1: Using collection slug: ${collectionSlug}`);
         const collectionInfo = await this.getCollectionInfoBySlug(collectionSlug, chainName);
-        
-        if (collectionInfo && collectionInfo.floor_price) {
-          console.log(`✅ Found floor price from collection slug: ${collectionInfo.floor_price} ETH`);
-          return collectionInfo.floor_price;
+        const freshFloor = await this.getFreshFloorPrice(collectionSlug, chainName, collectionInfo);
+
+        if (freshFloor) {
+          console.log(`✅ Found floor price from collection slug: ${freshFloor} ETH`);
+          return freshFloor;
         }
       }
       
@@ -953,129 +1026,6 @@ class NFTTracker {
     } catch (error) {
       console.error('Error fetching floor price:', error.message);
       console.log(`❌ No floor price found for ${contractAddress}`);
-      return null;
-    }
-  }
-
-  async getCollectionStats(contractAddress, chainName) {
-    try {
-      const apiKey = config.opensea.apiKey;
-      
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
-      console.log(`🔍 Fetching collection stats for ${contractAddress} on ${chainName} via OpenSea API V2...`);
-      
-      // First try to get collection info to find the slug
-      const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
-      if (collectionInfo && collectionInfo.slug) {
-        console.log(`🔍 Using collection slug: ${collectionInfo.slug}`);
-        
-        // Use OpenSea API V2 to get collection stats
-        const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(collectionInfo.slug)}/stats?chain=${chain}`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data.total) {
-            console.log(`✅ OpenSea API V2: Found collection stats for ${collectionInfo.slug}`);
-            return {
-              floor_price: data.total.floor_price,
-              total_volume: data.total.volume,
-              total_sales: data.total.sales,
-              num_owners: data.total.num_owners,
-              average_price: data.total.average_price,
-              // Interval stats
-              one_day_volume: data.intervals?.find(i => i.interval === 'one_day')?.volume,
-              seven_day_volume: data.intervals?.find(i => i.interval === 'seven_day')?.volume,
-              thirty_day_volume: data.intervals?.find(i => i.interval === 'thirty_day')?.volume,
-              one_day_sales: data.intervals?.find(i => i.interval === 'one_day')?.sales,
-              seven_day_sales: data.intervals?.find(i => i.interval === 'seven_day')?.sales,
-              thirty_day_sales: data.intervals?.find(i => i.interval === 'thirty_day')?.sales
-            };
-          }
-        }
-      }
-      
-      console.log(`❌ No collection stats found for ${contractAddress}`);
-      return null;
-    } catch (error) {
-      console.error('Error fetching collection stats:', error.message);
-      return null;
-    }
-  }
-
-  async getCollectionStatsBySlug(slug, chainName) {
-    try {
-      const apiKey = config.opensea.apiKey;
-      
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
-      console.log(`🔍 Fetching collection stats by slug: ${slug} on ${chainName} via OpenSea API V2...`);
-      
-      // Use OpenSea API V2 to get collection stats directly by slug
-      const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.total) {
-          console.log(`✅ OpenSea API V2: Found collection stats for ${slug}`);
-          return {
-            floor_price: data.total.floor_price,
-            total_volume: data.total.volume,
-            total_sales: data.total.sales,
-            num_owners: data.total.num_owners,
-            average_price: data.total.average_price,
-            total_supply: data.total.supply,
-            // Interval stats
-            one_day_volume: data.intervals?.find(i => i.interval === 'one_day')?.volume,
-            seven_day_volume: data.intervals?.find(i => i.interval === 'seven_day')?.volume,
-            thirty_day_volume: data.intervals?.find(i => i.interval === 'thirty_day')?.volume,
-            one_day_sales: data.intervals?.find(i => i.interval === 'one_day')?.sales,
-            seven_day_sales: data.intervals?.find(i => i.interval === 'seven_day')?.sales,
-            thirty_day_sales: data.intervals?.find(i => i.interval === 'thirty_day')?.sales
-          };
-        }
-      }
-      
-      console.log(`❌ No collection stats found for slug: ${slug}`);
-      return null;
-    } catch (error) {
-      console.error('Error fetching collection stats by slug:', error.message);
       return null;
     }
   }
@@ -1151,15 +1101,21 @@ class NFTTracker {
                 
                 if (slugResponse.ok) {
                   const slugData = await slugResponse.json();
-                  if (slugData.collection) {
+                  // /api/v2/collections/{slug} returns the collection at the
+                  // response root and `collection` is the slug *string*. Tolerate
+                  // both shapes rather than returning that bare string.
+                  const c = slugData.collection && typeof slugData.collection === 'object'
+                    ? slugData.collection
+                    : slugData;
+                  if (c && c.name) {
                     console.log(`✅ OpenSea API V2: Found collection info for slug: ${slug}`);
-                    console.log(`📊 Collection name: ${slugData.collection.name}`);
-                    console.log(`🔗 Twitter: ${slugData.collection.twitter_username || 'N/A'}`);
-                    console.log(`📱 Discord: ${slugData.collection.discord_url || 'N/A'}`);
-                    
+                    console.log(`📊 Collection name: ${c.name}`);
+                    console.log(`🔗 Twitter: ${c.twitter_username || 'N/A'}`);
+                    console.log(`📱 Discord: ${c.discord_url || 'N/A'}`);
+
                     // Add slug to the collection data for future use
-                    slugData.collection.slug = slug;
-                    return slugData.collection;
+                    c.slug = slug;
+                    return c;
                   }
                 }
               } catch (error) {
@@ -1252,8 +1208,10 @@ class NFTTracker {
                 continue;
               }
 
-              // Dedupe on tx+contract so a restart or overlapping scan doesn't re-post
-              // the same sweep, while still allowing one embed per collection.
+              // Dedupe on tx+contract so an overlapping scan doesn't re-post the
+              // same sweep, while still allowing one embed per collection. This
+              // set is in-memory only and starts empty on every boot, so it does
+              // NOT survive a restart.
               if (!this.markTransactionProcessed(groupKey)) {
                 console.log(`   ⚠️ Skipping already processed bulk group: ${groupKey}`);
                 walletInfo.lastEventTimestamp = Math.max(walletInfo.lastEventTimestamp, groupTimestamp);
@@ -1510,9 +1468,15 @@ class NFTTracker {
         return;
       }
 
-      // Deduplicate by transaction hash to prevent multiple messages for the same sweep
-      if (!this.markTransactionProcessed(txHashForDedup)) {
-        console.log(`   ⚠️ Skipping already processed tx: ${txHashForDedup}`);
+      // Deduplicate on tx+contract — the SAME namespace the bulk path uses. Keyed
+      // on the bare hash, a multi-collection sweep (three groups of size 1, one
+      // per collection) would post the first collection and silently swallow the
+      // rest as "already processed".
+      const dedupKey = typeof txHashForDedup === 'string' && txHashForDedup.length > 0
+        ? `${txHashForDedup}-${nft?.contract || 'unknown'}`
+        : txHashForDedup; // non-string/empty falls through markTransactionProcessed's guard
+      if (!this.markTransactionProcessed(dedupKey)) {
+        console.log(`   ⚠️ Skipping already processed tx: ${dedupKey}`);
         return;
       }
 
@@ -1726,7 +1690,9 @@ class NFTTracker {
 
       // Odeslat Discord notifikaci
       console.log(`   📤 Sending Discord notification...`);
-      console.log(`   📊 Transaction data for Discord:`, JSON.stringify(transactionData, null, 2));
+      // One-line summary only. Dumping transactionData leaked the wallet label
+      // from wallets.csv alongside its address, plus the whole collectionInfo blob.
+      console.log(`   📊 Notification summary: ${transactionData.type} | ${transactionData.tokenName} #${transactionData.tokenId} | ${price} ${nativeSymbol}`);
       await this.sendDiscordNotification(transactionData, this);
       console.log(`   ✅ Discord notification sent successfully!`);
 
@@ -1992,8 +1958,7 @@ class NFTTracker {
       
       if (response.ok) {
         const data = await response.json();
-        console.log(`📊 Floor price API response:`, JSON.stringify(data, null, 2));
-        
+
         if (data.asset_events && data.asset_events.length > 0) {
           // Calculate average price from recent sales
           const prices = data.asset_events
@@ -2159,58 +2124,6 @@ class NFTTracker {
       
     } catch (error) {
       console.error(`❌ Error in recoverPurchaseData:`, error.message);
-      return null;
-    }
-  }
-
-  async calculateFloorPriceChanges(contractAddress, chainName, currentFloorPrice) {
-    try {
-      // For now, we'll use a simple approach to calculate floor price changes
-      // In a production environment, you might want to store historical floor prices in a database
-      
-      if (!currentFloorPrice || currentFloorPrice <= 0) {
-        return null;
-      }
-      
-      const apiKey = config.opensea.apiKey;
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
-      // Get collection info to find the slug
-      const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
-      if (!collectionInfo || !collectionInfo.slug) {
-        return null;
-      }
-      
-      // For now, we'll use a simplified approach that estimates floor price changes
-      // based on volume changes and market activity
-      // In a real implementation, you would track historical floor prices over time
-      
-      console.log(`🔍 Calculating floor price changes for ${collectionInfo.slug}...`);
-      
-      // This is a placeholder implementation
-      // In a production system, you would:
-      // 1. Store floor prices in a database with timestamps
-      // 2. Query historical floor prices for 24h, 7d, and 30d ago
-      // 3. Calculate percentage changes
-      
-      // For now, return null to indicate no historical data available
-      // The Discord notifier will handle this gracefully
-      return null;
-      
-    } catch (error) {
-      console.error('Error calculating floor price changes:', error.message);
       return null;
     }
   }
@@ -2437,31 +2350,6 @@ class NFTTracker {
   }
 
   /**
-   * Get known royalties for popular collections that OpenSea API doesn't provide
-   */
-  getKnownCollectionRoyalties(slug, chainName) {
-    const knownRoyalties = {
-      // Base collections
-      'basepaint': 2.5, // BasePaint has 2.5% royalties
-      'friend.tech': 5, // Friend.tech has 5% royalties
-      'degen': 5, // Degen has 5% royalties
-      
-      // Ethereum collections
-      'boredapeyachtclub': 2.5, // BAYC has 2.5% royalties
-      'cryptopunks': 0, // CryptoPunks has 0% royalties
-      'doodles': 5, // Doodles has 5% royalties
-      'azuki': 5, // Azuki has 5% royalties
-      'pudgypenguins': 5, // Pudgy Penguins has 5% royalties
-      
-      // Polygon collections
-      'y00ts': 5, // y00ts has 5% royalties
-      'degenape': 5, // Degen Ape has 5% royalties
-    };
-    
-    return knownRoyalties[slug.toLowerCase()] || null;
-  }
-
-  /**
    * Get collection creator fees from OpenSea API v2
    * Creator fees are different from royalties and are always available
    */
@@ -2503,8 +2391,7 @@ class NFTTracker {
           
           if (nftResponse.ok) {
             const nftData = await nftResponse.json();
-            console.log(`🔍 NFT-specific data for ${contractAddress}/${tokenId}:`, JSON.stringify(nftData, null, 2));
-            
+
             // Check for creator fees in NFT data
             if (nftData.creator_fees && Array.isArray(nftData.creator_fees)) {
               let highestFee = null;
@@ -2545,8 +2432,7 @@ class NFTTracker {
           
           if (response.ok) {
             const data = await response.json();
-            console.log(`🔍 Collection v2 data for ${slug}:`, JSON.stringify(data, null, 2));
-            
+
             // Check for creator fees in fees array (this is where OpenSea v2 stores creator fees!)
             if (data.fees && Array.isArray(data.fees)) {
               console.log(`💰 Found ${data.fees.length} total fees in collection data`);

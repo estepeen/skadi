@@ -58,7 +58,9 @@ process.on('unhandledRejection', (reason) => {
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught exception:', error);
+  // Log the stack only — discord.js API errors carry a `requestBody` holding the
+  // full outgoing JSON payload, which the whole-object form would dump.
+  console.error('❌ Uncaught exception:', error?.stack ?? error);
   process.exit(1);
 });
 

@@ -388,7 +388,9 @@ class DiscordNotifier {
     const collectionSlugFromInfo = collectionInfo?.slug;
     const fallbackSlug = (tokenName || '').toString().trim().toLowerCase().replace(/\s+/g, '-');
     const collectionSlug = collectionSlugFromInfo || fallbackSlug || contractAddress;
-    const collectionOpenSeaUrl = `https://opensea.io/collection/${collectionSlug}`;
+    // fallbackSlug derives from tokenName, which on bulk paths can be an NFT name
+    // like "Cool Cat #123" — encode it so it can't break out of the markdown link.
+    const collectionOpenSeaUrl = `https://opensea.io/collection/${encodeURIComponent(collectionSlug)}`;
     const collectionLink = `[${collectionName}](${collectionOpenSeaUrl})`;
     
     let descriptionText;

@@ -41,15 +41,9 @@ function checkBotStatus() {
     const csvContent = fs.readFileSync(config.csvFile, 'utf8');
     const lines = csvContent.trim().split('\n');
     const walletCount = lines.length - 1; // Subtract header
+    // Count only — enumerating every address with its label dumped the whole
+    // watchlist to stdout, and with --monitor it repeated every 60 seconds.
     console.log(`\n👥 Wallets: ${walletCount} wallets loaded`);
-    
-    if (walletCount > 0) {
-      console.log('   Wallets:');
-      lines.slice(1).forEach(line => {
-        const [address, name] = line.split(',');
-        console.log(`   - ${name} (${address})`);
-      });
-    }
   } catch (error) {
     console.log('❌ Error reading wallets:', error.message);
   }
