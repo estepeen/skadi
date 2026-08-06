@@ -1144,8 +1144,12 @@ class NFTTracker {
       
       console.log(`🔍 Checking ${walletInfo.name} activity on OpenSea (since: ${new Date(lastEventTimestamp * 1000).toISOString()})`);
       
-      // Request sale, mint, bid_entered and bid_accepted events for complete coverage
-      const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&event_type=bid_entered&event_type=bid_accepted&limit=20`, {
+      // OpenSea v2 accepts only: sale, transfer, mint, listing, offer, trait_offer,
+      // collection_offer. bid_entered / bid_accepted were removed, and one invalid
+      // value makes the API reject the whole request with 400 - which silently
+      // killed all wallet tracking. An accepted bid still settles as a 'sale',
+      // so nothing is actually lost by dropping them.
+      const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&limit=20`, {
         headers: {
           'X-API-KEY': apiKey,
           'Accept': 'application/json'
@@ -2068,7 +2072,8 @@ class NFTTracker {
       // Strategy B: Fallback to account-based scan (buyer wallet history)
       console.log(`🔍 Fallback: scanning buyer account events for acquisition...`);
       const occurredAfter = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
-      const byAccountUrl = `https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&event_type=bid_accepted&occurred_after=${occurredAfter}&limit=100&chain=${chain}`;
+      // bid_accepted is not a valid event_type any more and would 400 the request
+      const byAccountUrl = `https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&occurred_after=${occurredAfter}&limit=100&chain=${chain}`;
       console.log(`🔗 API URL (by account): ${byAccountUrl}`);
 
       response = await fetch(byAccountUrl, {
