@@ -1,6 +1,32 @@
 const AlertsDatabase = require('./alertsDatabase');
 const { fetchWithRetry } = require('../utils/httpClient');
 const config = require('../config');
+// The key can be an auto-minted free one that rotates at runtime, so it has to
+// be read per request instead of captured from the env at load time.
+const { getCurrentKey, forceRenew } = require('../utils/openseaKey');
+
+/**
+ * Shared header block for every OpenSea request, so a renewed key is picked up
+ * by both polling loops without them caching it.
+ */
+function openseaHeaders() {
+  return {
+    'X-API-KEY': getCurrentKey() || '',
+    'Accept': 'application/json'
+  };
+}
+
+/**
+ * Renew the key when OpenSea rejects it. Never throws and never retries inline -
+ * the caller skips the current item and the next pass uses the new key.
+ */
+async function renewKeyAfterAuthFailure() {
+  try {
+    await forceRenew('alerts monitor 401');
+  } catch (error) {
+    console.log(`⚠️ Could not renew OpenSea key after 401: ${error.message}`);
+  }
+}
 
 class AlertsMonitor {
   constructor(discordNotifier, alertsDatabase = null) {
@@ -336,14 +362,15 @@ class AlertsMonitor {
       console.log(`🌐 Fetching from: ${url}`);
       
       const response = await fetchWithRetry(url, {
-        headers: {
-          'X-API-KEY': config.opensea.apiKey || '',
-          'Accept': 'application/json'
-        }
+        headers: openseaHeaders()
       });
 
       if (!response.ok) {
         console.error(`❌ OpenSea API error for ${slug}: ${response.status} ${response.statusText}`);
+        if (response.status === 401) {
+          await renewKeyAfterAuthFailure();
+          return null;
+        }
         throw new Error(`OpenSea API error: ${response.status}`);
       }
 
@@ -462,10 +489,13 @@ class AlertsMonitor {
     try {
       const url = `https://api.opensea.io/api/v2/chain/${encodeURIComponent(chain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(tokenId)}/listings?limit=10`;
       const res = await fetchWithRetry(url, {
-        headers: { 'X-API-KEY': config.opensea.apiKey || '', 'Accept': 'application/json' }
+        headers: openseaHeaders()
       });
       if (!res.ok) {
         console.log(`⚠️ Listings fetch failed: ${res.status} for ${contract}/${tokenId}`);
+        if (res.status === 401) {
+          await renewKeyAfterAuthFailure();
+        }
         return null;
       }
       const data = await res.json();

@@ -1,6 +1,36 @@
 const fs = require('fs');
 const path = require('path');
 
+const OPENSEA_KEY_FILE = path.join(__dirname, 'data', 'opensea-key.json');
+
+// The env key is optional - without one the bot mints and caches a free key, so
+// the cache file has to be consulted before reporting "Not set". Never print any
+// part of the key itself.
+function describeOpenseaKey(envKey) {
+  if (envKey) return 'Set (env)';
+
+  try {
+    if (!fs.existsSync(OPENSEA_KEY_FILE)) return 'Not set';
+
+    const cached = JSON.parse(fs.readFileSync(OPENSEA_KEY_FILE, 'utf8'));
+    if (!cached || typeof cached.api_key !== 'string' || cached.api_key.length === 0) {
+      return 'Not set';
+    }
+
+    const expiresAt = new Date(cached.expires_at).getTime();
+    if (!Number.isFinite(expiresAt)) return 'Set (auto, expiry unknown)';
+
+    const remainingMs = expiresAt - Date.now();
+    if (remainingMs <= 0) return 'Not set (auto key expired)';
+
+    const days = Math.floor(remainingMs / 86400000);
+    const hours = Math.floor((remainingMs % 86400000) / 3600000);
+    return `Set (auto, expires in ${days > 0 ? `${days}d` : `${hours}h`})`;
+  } catch (error) {
+    return `Unknown (${error.message})`;
+  }
+}
+
 function checkBotStatus() {
   console.log('🤖 NFT Tracker Bot Status Check');
   console.log('='.repeat(40));
@@ -30,7 +60,7 @@ function checkBotStatus() {
     console.log(`   Scan interval: ${config.scanInterval / 1000 / 60} minutes`);
     console.log(`   CSV file: ${config.csvFile}`);
     console.log(`   Discord enabled: ${config.discord.botToken ? 'Yes' : 'No'}`);
-    console.log(`   OpenSea API key: ${config.opensea.apiKey ? 'Set' : 'Not set'}`);
+    console.log(`   OpenSea API key: ${describeOpenseaKey(config.opensea.apiKey)}`);
   } catch (error) {
     console.log('❌ Error reading config:', error.message);
   }

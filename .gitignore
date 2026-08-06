@@ -66,4 +66,5 @@ Thumbs.db
 wallets.csv
 data/alerts.json
 data/purchases.json
+data/opensea-key.json
 ignored-collections.txt

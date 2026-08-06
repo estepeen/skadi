@@ -4,6 +4,16 @@ const fetch = require('node-fetch');
 const config = require('../config');
 const AlertsDatabase = require('./alertsDatabase');
 const registry = require('./registry');
+// The key can be an auto-minted free one that rotates at runtime, so it has to
+// be read per request instead of captured from the env at load time.
+const { getCurrentKey } = require('../utils/openseaKey');
+
+function openseaHeaders() {
+  return {
+    'X-API-KEY': getCurrentKey() || '',
+    'Accept': 'application/json'
+  };
+}
 
 class AlertsCommand {
   constructor(alertsDatabase = null) {
@@ -346,10 +356,7 @@ class AlertsCommand {
       console.log(`🔍 Fetching collection from: ${collectionUrl}`);
 
       const collectionRes = await fetch(collectionUrl, {
-        headers: { 
-          'X-API-KEY': config.opensea.apiKey, 
-          'Accept': 'application/json'
-        }
+        headers: openseaHeaders()
       });
 
       if (collectionRes.ok) {
@@ -508,7 +515,7 @@ class AlertsCommand {
     try {
       // First get collection info by slug to determine contract
       const collectionUrl = `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`;
-      const collectionRes = await fetch(collectionUrl, { headers: { 'X-API-KEY': config.opensea.apiKey, 'Accept': 'application/json' } });
+      const collectionRes = await fetch(collectionUrl, { headers: openseaHeaders() });
       if (collectionRes.ok) {
         const collectionData = await collectionRes.json();
         if (Array.isArray(collectionData.contracts) && collectionData.contracts.length > 0) {
@@ -524,10 +531,7 @@ class AlertsCommand {
       console.log(`🔍 Fetching NFT from: ${nftUrl}`);
 
       const nftRes = await fetch(nftUrl, {
-        headers: { 
-          'X-API-KEY': config.opensea.apiKey, 
-          'Accept': 'application/json'
-        }
+        headers: openseaHeaders()
       });
 
       if (nftRes.ok) {
@@ -674,7 +678,7 @@ class AlertsCommand {
     // Validate collection
     const collectionUrl = `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`;
     const collectionRes = await fetch(collectionUrl, {
-      headers: { 'X-API-KEY': config.opensea.apiKey, 'Accept': 'application/json' }
+      headers: openseaHeaders()
     });
 
     if (!collectionRes.ok) {

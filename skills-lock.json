@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "opensea": {
+      "source": "ProjectOpenSea/opensea-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "27b120c428168b717e22a420464f2f6b96e3dec484db0b375fe03cd8f2da96aa"
+    }
+  }
+}

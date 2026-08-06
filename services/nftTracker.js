@@ -7,10 +7,18 @@ const path = require('path');
 // `fetch` so the existing call sites in this file stay unchanged.
 const { fetchWithRetry: fetch } = require('../utils/httpClient');
 
+// Free OpenSea keys expire after 7 days and are revoked on rate-limit abuse,
+// so the key is resolved at startup and renewed in place on a 401.
+const { resolveKey, forceRenew } = require('../utils/openseaKey');
+
 class NFTTracker {
   constructor() {
     this.config = config;
-    
+
+    // Resolved in initialize(); seeded from the operator supplied env key so
+    // request paths used before initialize() still carry a key.
+    this.openseaApiKey = config.opensea.apiKey || null;
+
     this.trackedWallets = new Map(); // address -> { name, lastChecked }
     this.discordNotifier = new DiscordNotifier();
     // Cache for native token USD prices to reduce CoinGecko calls and avoid rate limits
@@ -44,7 +52,14 @@ class NFTTracker {
 
   async initialize(wallets) {
     console.log('Initializing NFT Tracker...');
-    
+
+    // Resolve the OpenSea key before the first sweep. A missing key is not fatal:
+    // the Discord side still starts, tracking simply fails until one is available.
+    this.openseaApiKey = await resolveKey();
+    if (!this.openseaApiKey) {
+      console.error('❌ No OpenSea API key available - OpenSea requests will fail until a key is resolved (set OPENSEA_API_KEY or wait for the next mint attempt)');
+    }
+
     // Get current timestamp in seconds
     const currentTime = Math.floor(Date.now() / 1000);
     
@@ -91,6 +106,41 @@ class NFTTracker {
     console.log('🚀 NFT Tracker ready - will fetch purchase data from OpenSea API when needed');
     
     this.isInitialized = true;
+  }
+
+  /**
+   * Shared header block for every OpenSea request, so a renewed key is picked up
+   * by all call sites without them having to resolve it themselves.
+   */
+  openseaHeaders() {
+    return {
+      'X-API-KEY': this.openseaApiKey || '',
+      'Accept': 'application/json'
+    };
+  }
+
+  /**
+   * Renew the key when OpenSea rejects it. Free keys expire after 7 days and are
+   * also revoked on rate-limit abuse, both of which surface as a 401. Never
+   * throws - the caller just skips the failed request and retries next sweep.
+   */
+  async handleAuthFailure(response) {
+    try {
+      if (!response || response.status !== 401) return false;
+
+      const body = await response.text();
+      if (!/expired|Invalid API key/i.test(body)) return false;
+
+      const newKey = await forceRenew(`OpenSea returned 401: ${body.slice(0, 200)}`);
+      if (!newKey) return false;
+
+      this.openseaApiKey = newKey;
+      console.log('✅ OpenSea key renewed - next sweep will use it');
+      return true;
+    } catch (error) {
+      console.log(`⚠️ Could not handle OpenSea auth failure: ${error.message}`);
+      return false;
+    }
   }
 
   async sleep(ms) {
@@ -151,8 +201,6 @@ class NFTTracker {
 
   async getMintPriceForNFT(contract, tokenId, chainName) {
     try {
-      const apiKey = config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -183,10 +231,7 @@ class NFTTracker {
       const url = `https://api.opensea.io/api/v2/events/chain/${chain}/contract/${contract}/nfts/${tokenId}?${params}`;
       
       const response = await fetch(url, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
       
       if (!response.ok) {
@@ -261,8 +306,6 @@ class NFTTracker {
 
   async getTransactionData(txHash, chainName) {
     try {
-      const apiKey = config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -293,10 +336,7 @@ class NFTTracker {
       // Try OpenSea API V2 for transaction events
       try {
         const response = await fetch(`https://api.opensea.io/api/v2/events/chain/${chain}/transaction/${txHash}`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
+          headers: this.openseaHeaders()
         });
         
         if (response.ok) {
@@ -388,8 +428,6 @@ class NFTTracker {
 
   async getNFTMetadata(contractAddress, tokenId, chainName) {
     try {
-      const apiKey = config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -409,10 +447,7 @@ class NFTTracker {
       
       // Use OpenSea API V2 for better compatibility and future-proofing
       const response = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
       
       if (response.ok) {
@@ -629,8 +664,6 @@ class NFTTracker {
 
   async fetchCollectionInfoBySlug(slug, chainName) {
     try {
-      const apiKey = this.config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -650,10 +683,7 @@ class NFTTracker {
       
       // Fetch collection info using slug
       const collectionResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
       
       if (collectionResponse.ok) {
@@ -670,10 +700,7 @@ class NFTTracker {
         // Fetch collection stats using the same slug
         console.log(`🔍 Fetching stats for slug: ${slug}`);
         const statsResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
+          headers: this.openseaHeaders()
         });
         
         let statsData = null;
@@ -748,8 +775,6 @@ class NFTTracker {
    */
   async getCollectionRoyalties(slug, chainName) {
     try {
-      const apiKey = this.config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -767,10 +792,7 @@ class NFTTracker {
       
       // Try to get royalties from collection details endpoint
       const royaltiesResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}&include_hidden=true`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
       
       if (royaltiesResponse.ok) {
@@ -865,8 +887,6 @@ class NFTTracker {
    */
   async fetchFloorPriceFromStats(slug, chainName) {
     try {
-      const apiKey = this.config.opensea.apiKey;
-
       const chainMap = {
         'Ethereum': 'ethereum',
         'ApeChain': 'ape_chain',
@@ -882,10 +902,7 @@ class NFTTracker {
       const chain = chainMap[chainName] || 'ethereum';
 
       const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
 
       if (!response.ok) {
@@ -936,8 +953,6 @@ class NFTTracker {
 
   async getFloorPrice(contractAddress, chainName, collectionSlug = null) {
     try {
-      const apiKey = config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -972,10 +987,7 @@ class NFTTracker {
         console.log(`🔍 Strategy 2: Trying OpenSea API v2 with collection slug...`);
         try {
           const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(collectionSlug)}/stats?chain=${chain}`, {
-            headers: {
-              'X-API-KEY': apiKey,
-              'Accept': 'application/json'
-            }
+            headers: this.openseaHeaders()
           });
           
           if (v2Response.ok) {
@@ -997,10 +1009,7 @@ class NFTTracker {
         const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
         if (collectionInfo && collectionInfo.slug) {
           const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(collectionInfo.slug)}/stats?chain=${chain}`, {
-            headers: {
-              'X-API-KEY': apiKey,
-              'Accept': 'application/json'
-            }
+            headers: this.openseaHeaders()
           });
 
           if (v2Response.ok) {
@@ -1043,8 +1052,6 @@ class NFTTracker {
 
   async fetchCollectionInfo(contractAddress, chainName) {
     try {
-      const apiKey = config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -1067,10 +1074,7 @@ class NFTTracker {
       try {
         // First, get collection name from NFT metadata
         const nftResponse = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/1`, {
-          headers: {
-            'X-API-KEY': apiKey,
-            'Accept': 'application/json'
-          }
+          headers: this.openseaHeaders()
         });
         
         if (nftResponse.ok) {
@@ -1094,10 +1098,7 @@ class NFTTracker {
                 await this.sleep(100);
                 
                 const slugResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}`, {
-                  headers: {
-                    'X-API-KEY': apiKey,
-                    'Accept': 'application/json'
-                  }
+                  headers: this.openseaHeaders()
                 });
                 
                 if (slugResponse.ok) {
@@ -1140,7 +1141,6 @@ class NFTTracker {
 
   async checkWalletActivity(walletAddress, walletInfo) {
     try {
-      const apiKey = config.opensea.apiKey;
       const lastEventTimestamp = walletInfo.lastEventTimestamp;
       
       console.log(`🔍 Checking ${walletInfo.name} activity on OpenSea (since: ${new Date(lastEventTimestamp * 1000).toISOString()})`);
@@ -1151,10 +1151,7 @@ class NFTTracker {
       // killed all wallet tracking. An accepted bid still settles as a 'sale',
       // so nothing is actually lost by dropping them.
       const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${walletAddress}?event_type=sale&event_type=mint&limit=20`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
       
       if (response.ok) {
@@ -1330,6 +1327,9 @@ class NFTTracker {
         }
       } else {
         console.log(`❌ Error fetching wallet activity: ${response.status} ${response.statusText}`);
+        // A 401 means the key expired or was revoked - renew it and let the next
+        // sweep retry this wallet.
+        await this.handleAuthFailure(response);
       }
       
     } catch (error) {
@@ -1848,8 +1848,6 @@ class NFTTracker {
 
   async getOrderDetails(orderHash, chainName) {
     try {
-      const apiKey = config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -1875,10 +1873,7 @@ class NFTTracker {
         try {
           const response = await fetch(`https://api.opensea.io/api/v2/orders/chain/${chain}/protocol/${protocol}/order_hash/${orderHash}`, {
             method: 'GET',
-            headers: {
-              'X-API-KEY': apiKey,
-              'Accept': 'application/json'
-            }
+            headers: this.openseaHeaders()
           });
           
           if (response.ok) {
@@ -1935,8 +1930,6 @@ class NFTTracker {
   async getEstimatedFloorPrice(contractAddress, chainName) {
     try {
       // Try to get estimated floor price from recent sales using OpenSea API v2
-      const apiKey = config.opensea.apiKey;
-      
       const chainMap = {
         'Ethereum': 'ethereum',
         'ApeChain': 'ape_chain',
@@ -1953,10 +1946,7 @@ class NFTTracker {
       
       // Use OpenSea API v2 events endpoint for Base chain - try different endpoint
       const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${contractAddress}?event_type=sale&limit=10&chain=${chain}`, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
       
       console.log(`🔍 Floor price API response status: ${response.status} ${response.statusText}`);
@@ -2000,7 +1990,6 @@ class NFTTracker {
    */
   async recoverPurchaseData(contractAddress, tokenId, walletAddress, chainName) {
     try {
-      const apiKey = this.config.opensea.apiKey;
       const chainMap = {
         'Ethereum': 'ethereum',
         'ApeChain': 'ape_chain',
@@ -2021,10 +2010,7 @@ class NFTTracker {
       console.log(`🔗 API URL (by NFT): ${byNftUrl}`);
 
       let response = await fetch(byNftUrl, {
-        headers: {
-          'X-API-KEY': apiKey,
-          'Accept': 'application/json'
-        }
+        headers: this.openseaHeaders()
       });
 
       if (response.ok) {
@@ -2078,7 +2064,7 @@ class NFTTracker {
       console.log(`🔗 API URL (by account): ${byAccountUrl}`);
 
       response = await fetch(byAccountUrl, {
-        headers: { 'X-API-KEY': apiKey, 'Accept': 'application/json' }
+        headers: this.openseaHeaders()
       });
 
       if (!response.ok) {
@@ -2361,8 +2347,6 @@ class NFTTracker {
    */
   async getCollectionCreatorFees(slug, chainName, contractAddress = null, tokenId = null) {
     try {
-      const apiKey = this.config.opensea.apiKey;
-      
       // Map chain names to OpenSea chain identifiers
       const chainMap = {
         'Ethereum': 'ethereum',
@@ -2389,10 +2373,7 @@ class NFTTracker {
       if (contractAddress && tokenId) {
         try {
           const nftResponse = await fetch(`https://api.opensea.io/api/v2/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}`, {
-            headers: {
-              'X-API-KEY': apiKey,
-              'Accept': 'application/json'
-            }
+            headers: this.openseaHeaders()
           });
           
           if (nftResponse.ok) {
@@ -2430,10 +2411,7 @@ class NFTTracker {
       if (!creatorFees.percentage) {
         try {
           const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}&include_hidden=true`, {
-            headers: {
-              'X-API-KEY': apiKey,
-              'Accept': 'application/json'
-            }
+            headers: this.openseaHeaders()
           });
           
           if (response.ok) {

@@ -3,6 +3,16 @@ const fetch = require('node-fetch');
 const config = require('../config');
 const CryptoPriceService = require('./cryptoPriceService');
 const registry = require('./registry');
+// The key can be an auto-minted free one that rotates at runtime, so it has to
+// be read per request instead of captured from the env at load time.
+const { getCurrentKey } = require('../utils/openseaKey');
+
+function openseaHeaders() {
+  return {
+    'Accept': 'application/json',
+    'X-API-KEY': getCurrentKey() || ''
+  };
+}
 
 class CollectionCommand {
   constructor() {
@@ -102,10 +112,7 @@ class CollectionCommand {
 
       // 1) Collection detail (name, fees, total_supply, odkazy)
       const colRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`, {
-        headers: {
-          'Accept': 'application/json',
-          'X-API-KEY': config.opensea.apiKey
-        }
+        headers: openseaHeaders()
       });
 
       console.log(`🔍 Collection response status: ${colRes.status} ${colRes.statusText}`);
@@ -116,10 +123,7 @@ class CollectionCommand {
 
       // 2) Stats (floor, volume, holders)
       const statsRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats`, {
-        headers: {
-          'Accept': 'application/json',
-          'X-API-KEY': config.opensea.apiKey
-        }
+        headers: openseaHeaders()
       });
 
       console.log(`🔍 Stats response status: ${statsRes.status} ${statsRes.statusText}`);

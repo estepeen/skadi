@@ -111,9 +111,29 @@ Ensure these are set in your VPS:
 ```bash
 export DISCORD_BOT_TOKEN="your_bot_token"
 export DISCORD_CHANNEL_ID="your_channel_id"
-export OPENSEA_API_KEY="your_opensea_api_key"
+export OPENSEA_API_KEY="your_opensea_api_key"   # optional, see below
 export DISCORD_NFTS_ROLE_ID="your_nfts_role_id"
+export WALLET_SCAN_DELAY="12000"                # optional, default 7000
 ```
+
+### OpenSea API Key
+
+`OPENSEA_API_KEY` is **not** required and the bot does not exit without it. When
+it is empty the bot mints a free key at startup, caches it in
+`data/opensea-key.json` and renews it automatically when OpenSea answers a
+request with a 401. A key you supply yourself always wins and is never replaced.
+
+The free key comes with limits worth knowing when the bot suddenly goes quiet:
+- 600 requests per hour
+- expires after 7 days
+- revoked immediately if you trip the rate limit
+- only two keys can be minted per day per IP address
+
+So a run of 401s usually means either the key expired or the rate limit was
+tripped and the key was revoked. Raise `WALLET_SCAN_DELAY` to slow the sweep
+down, and note that the bot can only mint two replacement keys per day from one
+IP address. `node monitor-bot.js` reports whether a key is currently in place and
+how long it is still valid.
 
 ## Bot Restart
 

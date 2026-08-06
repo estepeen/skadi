@@ -45,7 +45,7 @@ npm install
 
 2. Create a `.env` file with your API keys:
 ```env
-# OpenSea API Key (required)
+# OpenSea API Key (optional - a free key is minted automatically when empty)
 OPENSEA_API_KEY=your_opensea_api_key_here
 
 # Discord Configuration
@@ -108,7 +108,11 @@ nft-tracker/
 ## Configuration
 
 - `SCAN_INTERVAL`: Scan interval in milliseconds (default: 30000ms = 30s)
-- `OPENSEA_API_KEY`: OpenSea API key for metadata, floor prices and transactions (required)
+- `WALLET_SCAN_DELAY`: Pause between two wallets in one sweep, in milliseconds
+  (default: 7000ms; 12000ms is used in production). Raise it if you are on a free
+  key, lower it if your key has a higher rate limit.
+- `OPENSEA_API_KEY`: OpenSea API key for metadata, floor prices and transactions
+  (optional - see [API Keys](#api-keys))
 - `DISCORD_BOT_TOKEN`: Discord bot token
 - `DISCORD_CHANNEL_ID`: Channel ID for notifications
 - `DISCORD_NFTS_ROLE_ID`: Role ID for NFT notifications (optional)
@@ -143,9 +147,22 @@ The bot will display in the console:
 ## API Keys
 
 **OpenSea API V2:**
-- Get one at https://docs.opensea.io/reference/api-overview
 - Used for NFT metadata, floor prices and transactions on all networks
-- Required for the bot to work correctly
+- If you have your own key, put it in `OPENSEA_API_KEY` — it is always preferred
+  and the bot never replaces it. Request one at
+  https://docs.opensea.io/reference/api-overview
+- If `OPENSEA_API_KEY` is empty, the bot mints a free key at startup, caches it in
+  `data/opensea-key.json` and renews it automatically when OpenSea rejects it with
+  a 401. The bot does **not** exit without a key.
+
+Caveats of the automatically minted free key:
+- 600 requests per hour
+- expires after 7 days
+- revoked immediately if you trip the rate limit
+- only two keys can be minted per day per IP address
+
+Because of the rate limit, pace the sweep with `WALLET_SCAN_DELAY` — the more
+wallets you track, the higher it has to be.
 
 ## Notes
 

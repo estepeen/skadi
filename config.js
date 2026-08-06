@@ -2,9 +2,10 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
+// Not fatal any more: utils/openseaKey.js falls back to a cached or freshly
+// minted free key when the operator has no key of their own.
 if (!process.env.OPENSEA_API_KEY) {
-  console.error('❌ OPENSEA_API_KEY is not set. Add it to your .env file.');
-  process.exit(1);
+  console.log('⚠️ OPENSEA_API_KEY is not set - a free OpenSea key will be resolved automatically.');
 }
 
 if (!process.env.DISCORD_BOT_TOKEN) {
