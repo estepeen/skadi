@@ -40,6 +40,13 @@ class NFTTracker {
     this.processedOpenSeaTxs = new Set();
     this.MAX_PROCESSED_TXS = 5000; // cap to prevent unbounded memory growth
 
+    // Memoized collection lookups. A single notification used to trigger the same
+    // collection/stats/royalties fetches 3-5 times, which trips OpenSea's ~4 req/s free tier.
+    this.collectionCache = new Map(); // key -> { data, ts, ttl }
+    this.COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000; // successful lookups
+    this.COLLECTION_CACHE_NEGATIVE_TTL_MS = 60 * 1000; // transient failures shouldn't stick
+    this.MAX_COLLECTION_CACHE = 500;
+
     this.isInitialized = false;
     
     // No more purchases.json dependency - we always fetch from OpenSea API
@@ -566,7 +573,66 @@ class NFTTracker {
     }
   }
 
+  /**
+   * Read a memoized collection lookup. Returns `undefined` on a miss so that a
+   * cached negative result (`null`) is still served from cache.
+   */
+  getCachedCollection(cacheKey) {
+    const entry = this.collectionCache.get(cacheKey);
+    if (!entry) return undefined;
+    if (Date.now() - entry.ts > entry.ttl) {
+      this.collectionCache.delete(cacheKey);
+      return undefined;
+    }
+    console.log(`📊 Collection cache hit: ${cacheKey}${entry.data ? '' : ' (negative)'}`);
+    return entry.data;
+  }
+
+  /**
+   * Store a collection lookup. Negative results get a short TTL so a transient
+   * API failure doesn't hide a collection for the full 10 minutes.
+   */
+  setCachedCollection(cacheKey, data) {
+    const ttl = data ? this.COLLECTION_CACHE_TTL_MS : this.COLLECTION_CACHE_NEGATIVE_TTL_MS;
+    this.collectionCache.set(cacheKey, { data, ts: Date.now(), ttl });
+    while (this.collectionCache.size > this.MAX_COLLECTION_CACHE) {
+      const oldestKey = this.collectionCache.keys().next().value;
+      this.collectionCache.delete(oldestKey);
+    }
+  }
+
+  /**
+   * Resolve collection info by slug when we have one, otherwise by contract.
+   * Mirrors what discordNotifier used to do inline, so the embed can reuse the
+   * single object instead of refetching it twice.
+   */
+  async resolveCollectionInfo(slug, contractAddress, chainName) {
+    try {
+      const usableSlug = slug && slug !== 'Unknown' ? slug : null;
+      if (usableSlug) {
+        return await this.getCollectionInfoBySlug(usableSlug, chainName);
+      }
+      if (contractAddress) {
+        return await this.getCollectionInfo(contractAddress, chainName);
+      }
+      return null;
+    } catch (error) {
+      console.log(`⚠️ Could not resolve collection info: ${error.message}`);
+      return null;
+    }
+  }
+
   async getCollectionInfoBySlug(slug, chainName) {
+    const cacheKey = `slug:${String(slug || '').toLowerCase()}|${String(chainName || '').toLowerCase()}`;
+    const cached = this.getCachedCollection(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const data = await this.fetchCollectionInfoBySlug(slug, chainName);
+    this.setCachedCollection(cacheKey, data);
+    return data;
+  }
+
+  async fetchCollectionInfoBySlug(slug, chainName) {
     try {
       const apiKey = this.config.opensea.apiKey;
       
@@ -831,7 +897,7 @@ class NFTTracker {
       if (collectionSlug) {
         console.log(`🔍 Strategy 2: Trying OpenSea API v2 with collection slug...`);
         try {
-          const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${collectionSlug}/stats?chain=${chain}`, {
+          const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(collectionSlug)}/stats?chain=${chain}`, {
             headers: {
               'X-API-KEY': apiKey,
               'Accept': 'application/json'
@@ -856,31 +922,18 @@ class NFTTracker {
         // First try to get collection info to find the slug
         const collectionInfo = await this.getCollectionInfo(contractAddress, chainName);
         if (collectionInfo && collectionInfo.slug) {
-          const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${collectionInfo.slug}/stats?chain=${chain}`, {
+          const v2Response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(collectionInfo.slug)}/stats?chain=${chain}`, {
             headers: {
               'X-API-KEY': apiKey,
               'Accept': 'application/json'
             }
           });
-          
+
           if (v2Response.ok) {
             const v2Data = await v2Response.json();
-            if (v2Data.total) {
-              console.log(`✅ OpenSea API v2: Found collection stats via collection info`);
-              return {
-                floor_price: v2Data.total.floor_price,
-                total_volume: v2Data.total.volume,
-                total_sales: v2Data.total.sales,
-                num_owners: v2Data.total.num_owners,
-                average_price: v2Data.total.average_price,
-                // Interval stats
-                one_day_volume: v2Data.intervals?.find(i => i.interval === 'one_day')?.volume,
-                seven_day_volume: v2Data.intervals?.find(i => i.interval === 'seven_day')?.volume,
-                thirty_day_volume: v2Data.intervals?.find(i => i.interval === 'thirty_day')?.volume,
-                one_day_sales: v2Data.intervals?.find(i => i.interval === 'one_day')?.sales,
-                seven_day_sales: v2Data.intervals?.find(i => i.interval === 'seven_day')?.sales,
-                thirty_day_sales: v2Data.intervals?.find(i => i.interval === 'thirty_day')?.sales
-              };
+            if (v2Data.total && Number.isFinite(v2Data.total.floor_price) && v2Data.total.floor_price > 0) {
+              console.log(`✅ OpenSea API v2: Found floor price via collection info: ${v2Data.total.floor_price} ETH`);
+              return v2Data.total.floor_price;
             }
           }
         }
@@ -896,11 +949,11 @@ class NFTTracker {
       }
       
       console.log(`❌ No floor price found for ${contractAddress} after trying all strategies`);
-      return '-';
+      return null;
     } catch (error) {
       console.error('Error fetching floor price:', error.message);
-      console.log(`❌ No floor price found for ${contractAddress}, using dash`);
-      return '-';
+      console.log(`❌ No floor price found for ${contractAddress}`);
+      return null;
     }
   }
 
@@ -931,7 +984,7 @@ class NFTTracker {
         console.log(`🔍 Using collection slug: ${collectionInfo.slug}`);
         
         // Use OpenSea API V2 to get collection stats
-        const response = await fetch(`https://api.opensea.io/api/v2/collections/${collectionInfo.slug}/stats?chain=${chain}`, {
+        const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(collectionInfo.slug)}/stats?chain=${chain}`, {
           headers: {
             'X-API-KEY': apiKey,
             'Accept': 'application/json'
@@ -1028,6 +1081,16 @@ class NFTTracker {
   }
 
   async getCollectionInfo(contractAddress, chainName) {
+    const cacheKey = `contract:${String(contractAddress || '').toLowerCase()}|${String(chainName || '').toLowerCase()}`;
+    const cached = this.getCachedCollection(cacheKey);
+    if (cached !== undefined) return cached;
+
+    const data = await this.fetchCollectionInfo(contractAddress, chainName);
+    this.setCachedCollection(cacheKey, data);
+    return data;
+  }
+
+  async fetchCollectionInfo(contractAddress, chainName) {
     try {
       const apiKey = config.opensea.apiKey;
       
@@ -1079,7 +1142,7 @@ class NFTTracker {
                 // Add delay to avoid rate limiting
                 await this.sleep(100);
                 
-                const slugResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}`, {
+                const slugResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}`, {
                   headers: {
                     'X-API-KEY': apiKey,
                     'Accept': 'application/json'
@@ -1156,20 +1219,47 @@ class NFTTracker {
           if (newEvents.length > 0) {
           console.log(`📅 Processing ${newEvents.length} new events in chronological order...`);
 
-          // Group events by transaction hash to detect sweeps across multiple per-item events
+          // Group events by transaction hash AND contract, so a multi-collection sweep
+          // (routine on bulk-buy flows) produces one embed per collection instead of
+          // attributing the whole lot to group[0]'s collection.
           const groupsByTx = new Map();
           for (const ev of newEvents) {
             const key = typeof ev.transaction === 'string' && ev.transaction.length > 0
-              ? ev.transaction
+              ? `${ev.transaction}-${ev.nft?.contract || 'unknown'}`
               : `${ev.event_type}-${ev.nft?.contract}-${ev.nft?.identifier}-${ev.event_timestamp}`;
             if (!groupsByTx.has(key)) groupsByTx.set(key, []);
             groupsByTx.get(key).push(ev);
           }
 
-          for (const [txHash, group] of groupsByTx.entries()) {
+          for (const [groupKey, group] of groupsByTx.entries()) {
             if (group.length >= 2) {
               // Build synthetic bulk event from the group
               const base = group[0];
+              const txHash = typeof base.transaction === 'string' && base.transaction.length > 0
+                ? base.transaction
+                : null;
+              const groupTimestamp = group.reduce((maxTs, e) => {
+                const ts = typeof e.event_timestamp === 'number' ? e.event_timestamp : new Date(e.event_timestamp).getTime() / 1000;
+                return Math.max(maxTs, ts);
+              }, 0);
+
+              // 🚫 Bulk sweeps must honour the ignore list too — this check used to
+              // live only inside processOpenSeaEvent, which the bulk path skips.
+              const groupCollectionSlug = base.collection || base.nft?.collection || '';
+              if (this.isIgnoredCollection(groupCollectionSlug)) {
+                console.log(`   🚫 Skipping ignored collection (bulk): ${groupCollectionSlug}`);
+                walletInfo.lastEventTimestamp = Math.max(walletInfo.lastEventTimestamp, groupTimestamp);
+                continue;
+              }
+
+              // Dedupe on tx+contract so a restart or overlapping scan doesn't re-post
+              // the same sweep, while still allowing one embed per collection.
+              if (!this.markTransactionProcessed(groupKey)) {
+                console.log(`   ⚠️ Skipping already processed bulk group: ${groupKey}`);
+                walletInfo.lastEventTimestamp = Math.max(walletInfo.lastEventTimestamp, groupTimestamp);
+                continue;
+              }
+
               // Detect mint groups not only by explicit 'mint' type, but also
               // by OpenSea 'sale' events where the seller is the NFT contract
               // and the buyer is our tracked wallet (typical mint pattern)
@@ -1219,13 +1309,10 @@ class NFTTracker {
                 buyer: base.buyer,
                 seller: base.seller,
                 payment: totalPaid > 0 ? { quantity: String(totalPaid * Math.pow(10, decimals)), decimals, symbol: base.payment?.symbol } : null,
-                event_timestamp: group.reduce((maxTs, e) => {
-                  const ts = typeof e.event_timestamp === 'number' ? e.event_timestamp : new Date(e.event_timestamp).getTime() / 1000;
-                  return Math.max(maxTs, ts);
-                }, 0)
+                event_timestamp: groupTimestamp
               };
 
-              console.log(`\n🔗 Grouped ${group.length} events into bulk tx ${txHash} (qty=${totalQty}, paid≈${totalPaid})`);
+              console.log(`\n🔗 Grouped ${group.length} events into bulk group ${groupKey} (qty=${totalQty}, paid≈${totalPaid})`);
               
               // Determine if this is a bulk sale or bulk purchase based on wallet role
               const walletAddress = walletInfo.address.toLowerCase();
@@ -1285,6 +1372,31 @@ class NFTTracker {
     } catch (error) {
       console.error(`Error checking wallet activity for ${walletInfo.name}:`, error.message);
     }
+  }
+
+  /**
+   * True when the collection slug is on the configured ignore list.
+   */
+  isIgnoredCollection(slug) {
+    const normalized = typeof slug === 'string' ? slug.toLowerCase() : '';
+    if (!normalized) return false;
+    const ignored = this.config.ignoredCollections;
+    return Array.isArray(ignored) && ignored.length > 0 && ignored.includes(normalized);
+  }
+
+  /**
+   * Record a transaction as processed. Returns false when it was already seen so
+   * callers can skip re-posting after a restart or an overlapping scan.
+   */
+  markTransactionProcessed(txHash) {
+    if (typeof txHash !== 'string' || txHash.length === 0) return true;
+    if (this.processedOpenSeaTxs.has(txHash)) return false;
+    this.processedOpenSeaTxs.add(txHash);
+    if (this.processedOpenSeaTxs.size > this.MAX_PROCESSED_TXS) {
+      const oldest = this.processedOpenSeaTxs.values().next().value;
+      this.processedOpenSeaTxs.delete(oldest);
+    }
+    return true;
   }
 
   async processOpenSeaEvent(event, walletInfo) {
@@ -1385,32 +1497,23 @@ class NFTTracker {
       }
 
       // 🚫 CHECK FOR IGNORED COLLECTIONS
-      const collectionSlug = (event.collection || '').toLowerCase();
+      // The account-events payload nests the slug under nft, not at the event root.
+      const collectionSlug = (event.collection || nft?.collection || '').toLowerCase();
       
       // DEBUG: Log collection info for debugging
       console.log(`   🔍 DEBUG: Collection slug: "${collectionSlug}"`);
       console.log(`   🔍 DEBUG: Ignored collections: [${(this.config.ignoredCollections || []).join(', ')}]`);
       
       // Check if collection is in ignore list
-      if (this.config.ignoredCollections && 
-          this.config.ignoredCollections.length > 0 && 
-          collectionSlug && 
-          this.config.ignoredCollections.includes(collectionSlug)) {
+      if (this.isIgnoredCollection(collectionSlug)) {
         console.log(`   🚫 Skipping ignored collection: ${collectionSlug}`);
         return;
       }
 
       // Deduplicate by transaction hash to prevent multiple messages for the same sweep
-      if (typeof txHashForDedup === 'string' && txHashForDedup.length > 0) {
-        if (this.processedOpenSeaTxs.has(txHashForDedup)) {
-          console.log(`   ⚠️ Skipping already processed tx: ${txHashForDedup}`);
-          return;
-        }
-        this.processedOpenSeaTxs.add(txHashForDedup);
-        if (this.processedOpenSeaTxs.size > this.MAX_PROCESSED_TXS) {
-          const oldest = this.processedOpenSeaTxs.values().next().value;
-          this.processedOpenSeaTxs.delete(oldest);
-        }
+      if (!this.markTransactionProcessed(txHashForDedup)) {
+        console.log(`   ⚠️ Skipping already processed tx: ${txHashForDedup}`);
+        return;
       }
 
       // Decide between single vs. bulk transaction handling
@@ -1514,7 +1617,9 @@ class NFTTracker {
       // Floor price from OpenSea - use slug if available
       const floorPrice = await this.getFloorPrice(nft.contract, chainName, nft.collection);
 
-
+      // Resolve collection info once and hand it to the notifier, which used to
+      // refetch it twice per embed. Memoized, so this is normally a cache hit.
+      const collectionInfo = await this.resolveCollectionInfo(nft.collection, nft.contract, chainName);
 
       // Build transactionData
       console.log(`   🔍 Final transaction type determination: isMint=${isMint}, isPurchase=${isPurchase}, isSale=${isSale}`);
@@ -1539,6 +1644,7 @@ class NFTTracker {
         nftName: nft.name || `${nft.collection} #${nft.identifier}`,
         nativeSymbol: nativeSymbol,
         floorPrice: floorPrice,
+        collectionInfo: collectionInfo,
         isBidAccepted: isBidAccepted // Add flag for bid accepted
       };
 
@@ -1706,10 +1812,13 @@ class NFTTracker {
     const contractAddress = representative?.contract;
     const tokenName = representative?.collection || representative?.name || 'Unknown';
 
-    let floorPrice = '-';
+    let floorPrice = null;
     if (contractAddress) {
       floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
     }
+
+    // Resolve collection info once so the embed doesn't refetch it (memoized).
+    const collectionInfo = await this.resolveCollectionInfo(tokenName, contractAddress, chainName);
 
     // Get collection royalties info
     let royaltiesInfo = null;
@@ -1758,6 +1867,7 @@ class NFTTracker {
       nftName: representative?.name,
       nativeSymbol: nativeSymbol,
       floorPrice: floorPrice,
+      collectionInfo: collectionInfo,
       royaltiesInfo: royaltiesInfo
     };
 
@@ -2175,10 +2285,13 @@ class NFTTracker {
     const tokenName = representative?.collection || representative?.name || 'Unknown';
 
     // Floor price (best-effort, per collection)
-    let floorPrice = '-';
+    let floorPrice = null;
     if (contractAddress) {
       floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
     }
+
+    // Resolve collection info once so the embed doesn't refetch it (memoized).
+    const collectionInfo = await this.resolveCollectionInfo(tokenName, contractAddress, chainName);
 
     // Get collection royalties info
     let royaltiesInfo = null;
@@ -2307,6 +2420,7 @@ class NFTTracker {
       nftName: representative?.name,
       nativeSymbol: nativeSymbol,
       floorPrice: floorPrice,
+      collectionInfo: collectionInfo,
       // PnL data
       buyPrice: avgBuyPrice,
       buyPriceUSD: avgBuyPriceUSD,
@@ -2422,7 +2536,7 @@ class NFTTracker {
       // Strategy 2: Try to get creator fees from collection details endpoint
       if (!creatorFees.percentage) {
         try {
-          const response = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}&include_hidden=true`, {
+          const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}&include_hidden=true`, {
             headers: {
               'X-API-KEY': apiKey,
               'Accept': 'application/json'
@@ -2606,10 +2720,13 @@ class NFTTracker {
     const tokenName = representative?.collection || representative?.name || 'Unknown';
 
     // Floor price (best-effort, per collection)
-    let floorPrice = '-';
+    let floorPrice = null;
     if (contractAddress) {
       floorPrice = await this.getFloorPrice(contractAddress, chainName, tokenName);
     }
+
+    // Resolve collection info once so the embed doesn't refetch it (memoized).
+    const collectionInfo = await this.resolveCollectionInfo(tokenName, contractAddress, chainName);
 
     // Get collection royalties info
     let royaltiesInfo = null;
@@ -2736,6 +2853,7 @@ class NFTTracker {
       nftName: representative?.name,
       nativeSymbol: nativeSymbol,
       floorPrice: floorPrice,
+      collectionInfo: collectionInfo,
       // PnL data
       buyPrice: avgBuyPrice,
       buyPriceUSD: avgBuyPriceUSD,

@@ -219,25 +219,27 @@ class DiscordNotifier {
       isBulk = false, holdTime, pnl, pnlUSD
     } = transactionData;
 
-    // Get collection info for better display
-    let collectionInfo = null;
+    // Collection info: prefer what the tracker already fetched. Refetching it here
+    // (once for the name, once for the social links) cost 3+ extra OpenSea calls
+    // per notification. Only fall back to a lookup when it wasn't supplied.
+    let collectionInfo = transactionData.collectionInfo || null;
     let collectionName = tokenName;
     let floorPriceValue = floorPrice;
-    
-    if (contractAddress && nftTracker) {
+
+    if (!collectionInfo && contractAddress && nftTracker) {
       try {
         // Try to get collection info for better name and floor price
         const collectionSlug = tokenName && tokenName !== 'Unknown' ? tokenName : null;
-        collectionInfo = collectionSlug 
+        collectionInfo = collectionSlug
           ? await nftTracker.getCollectionInfoBySlug(collectionSlug, chainName)
           : await nftTracker.getCollectionInfo(contractAddress, chainName);
-        
-        if (collectionInfo && collectionInfo.name) {
-          collectionName = collectionInfo.name;
-        }
       } catch (error) {
         console.log(`⚠️ Error getting collection info for display: ${error.message}`);
       }
+    }
+
+    if (collectionInfo && collectionInfo.name) {
+      collectionName = collectionInfo.name;
     }
 
     // Set color and action based on transaction type
@@ -411,21 +413,6 @@ class DiscordNotifier {
       const formattedFloorPrice = this.formatPrice(floorPriceValue);
       
       descriptionText += ` Current floor price is ${formattedFloorPrice} ${displaySymbol}`;
-      
-      // Try to get 24h floor price change if available
-      if (contractAddress && nftTracker) {
-        try {
-          const stats = await nftTracker.getCollectionStats(contractAddress, chainName);
-          if (stats && stats.one_day_change !== undefined) {
-            const change24h = stats.one_day_change;
-            const change24hStr = change24h >= 0 ? `+${(change24h * 100).toFixed(1)}%` : `${(change24h * 100).toFixed(1)}%`;
-            descriptionText += ` (24h: ${change24hStr})`;
-          }
-        } catch (error) {
-          // Silently ignore floor price change errors
-        }
-      }
-      
       descriptionText += '.';
     }
     
@@ -635,42 +622,32 @@ class DiscordNotifier {
     let openSeaUrl = 'https://opensea.io';
     let projectUrl = 'https://opensea.io';
     
-    if (contractAddress && nftTracker) {
-      try {
-        // Use slug if available in transaction data, otherwise fall back to contract address
-        const collectionSlug = transactionData.tokenName && transactionData.tokenName !== 'Unknown' ? transactionData.tokenName : null;
-        const collectionInfo = collectionSlug 
-          ? await nftTracker.getCollectionInfoBySlug(collectionSlug, chainName)
-          : await nftTracker.getCollectionInfo(contractAddress, chainName);
-        if (collectionInfo) {
-          // Twitter link
-          if (collectionInfo.twitter_username) {
-            twitterUrl = `https://twitter.com/${collectionInfo.twitter_username}`;
-          }
-          
-          // Discord link
-          if (collectionInfo.discord_url) {
-            discordUrl = collectionInfo.discord_url;
-          }
-          
-          // OpenSea link
-          if (collectionInfo.opensea_url) {
-            openSeaUrl = collectionInfo.opensea_url;
-          } else if (collectionInfo.slug) {
-            openSeaUrl = `https://opensea.io/collection/${collectionInfo.slug}`;
-          } else {
-            openSeaUrl = `https://opensea.io/collection/${contractAddress}`;
-          }
-          
-          // Project URL (website)
-          if (collectionInfo.project_url) {
-            projectUrl = collectionInfo.project_url;
-          } else if (collectionInfo.external_url) {
-            projectUrl = collectionInfo.external_url;
-          }
-        }
-      } catch (error) {
-        console.log(`❌ Error getting collection info: ${error.message}`);
+    // Reuse the single collection info object resolved at the top of this method.
+    if (collectionInfo) {
+      // Twitter link
+      if (collectionInfo.twitter_username) {
+        twitterUrl = `https://twitter.com/${collectionInfo.twitter_username}`;
+      }
+
+      // Discord link
+      if (collectionInfo.discord_url) {
+        discordUrl = collectionInfo.discord_url;
+      }
+
+      // OpenSea link
+      if (collectionInfo.opensea_url) {
+        openSeaUrl = collectionInfo.opensea_url;
+      } else if (collectionInfo.slug) {
+        openSeaUrl = `https://opensea.io/collection/${collectionInfo.slug}`;
+      } else {
+        openSeaUrl = `https://opensea.io/collection/${contractAddress}`;
+      }
+
+      // Project URL (website)
+      if (collectionInfo.project_url) {
+        projectUrl = collectionInfo.project_url;
+      } else if (collectionInfo.external_url) {
+        projectUrl = collectionInfo.external_url;
       }
     }
     
