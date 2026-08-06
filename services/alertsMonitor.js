@@ -7,8 +7,7 @@ class AlertsMonitor {
     this.alertsDb = alertsDatabase || new AlertsDatabase();
     this.discordNotifier = discordNotifier;
     this.initialized = false;
-    this.lastFloorPriceCheck = new Map(); // slug -> timestamp
-    this.floorPriceCache = new Map(); // slug -> { price, timestamp }
+    this.floorPriceCache = new Map(); // slug-chain -> { price, timestamp }
     this.FLOOR_PRICE_CHECK_INTERVAL = 60 * 1000; // 1 minute
     this.FLOOR_PRICE_CACHE_DURATION = 60 * 1000; // 1 minute
     this.floorPriceInterval = null;
@@ -20,6 +19,15 @@ class AlertsMonitor {
     this.floorPriceGeneration = 0;
     this.tokenListingGeneration = 0;
     this.seenListingIdentities = new Map(); // alertId -> Set of order hashes already reported
+    // Price-threshold alerts dedupe on the cheapest listing only: an unrelated
+    // new order must not re-fire the same, unchanged cheapest listing
+    this.lastCheapestIdentity = new Map(); // alertId -> order hash of the cheapest listing
+    this.lastFiredAt = new Map(); // alertId -> timestamp of the last delivered alert
+    this.deliveryFailures = new Map(); // alertId -> consecutive failed sends
+    // Without usable hashes dedupe is impossible, so cap how often such an
+    // alert may fire instead of pinging every pass
+    this.UNDEDUPED_FIRE_INTERVAL = 15 * 60 * 1000; // 15 minutes
+    this.MAX_DELIVERY_FAILURES = 5;
   }
 
   async initialize() {
@@ -185,11 +193,13 @@ class AlertsMonitor {
       const sent = await this.sendCollectionAlert(alert, currentFloorPrice);
 
       // A failed delivery must not consume the alert - leave it active so the
-      // next pass retries instead of silently swallowing it
+      // next pass retries, but only up to the failure ceiling
       if (!sent) {
-        console.warn(`⚠️ Collection alert ${alertId} was not delivered, keeping it active for the next pass`);
+        await this.registerDeliveryFailure(alert);
         return;
       }
+
+      this.registerDeliverySuccess(alertId);
 
       // Deactivate the alert after triggering
       if (alert.mode !== 'repeat') {
@@ -203,17 +213,46 @@ class AlertsMonitor {
 
   // channels.cache is only populated lazily, so an alert in an uncached channel
   // could never fire. Fall back to an API fetch; null means genuinely not found.
+  // Everything runs inside the try: a missing client used to throw a TypeError
+  // that the callers logged as "Error sending ... alert", masking the cause.
   async resolveAlertChannel(channelId) {
-    const client = this.discordNotifier.getClient();
-    const cached = client.channels.cache.get(channelId);
-    if (cached) return cached;
-
     try {
+      const client = this.discordNotifier?.getClient();
+      if (!client) {
+        console.error(`❌ Discord client not available, cannot resolve alert channel ${channelId}`);
+        return null;
+      }
+
+      const cached = client.channels.cache.get(channelId);
+      if (cached) return cached;
+
       return await client.channels.fetch(channelId);
     } catch (error) {
       console.error(`❌ Could not fetch alert channel ${channelId}:`, error?.message ?? error);
       return null;
     }
+  }
+
+  // Keeping a failed alert active is right, but unbounded: a deleted or
+  // unwritable channel fails forever and would retry every 60 s for the
+  // lifetime of the process. Give up after MAX_DELIVERY_FAILURES.
+  async registerDeliveryFailure(alert) {
+    const alertId = alert.id;
+    const failures = (this.deliveryFailures.get(alertId) || 0) + 1;
+
+    if (failures >= this.MAX_DELIVERY_FAILURES) {
+      console.warn(`⚠️ Alert ${alertId} deactivated after ${failures} consecutive delivery failures to channel ${alert.channelId}`);
+      this.deliveryFailures.delete(alertId);
+      await this.alertsDb.updateAlert(alert.userId, alertId, { active: false });
+      return;
+    }
+
+    this.deliveryFailures.set(alertId, failures);
+    console.warn(`⚠️ Alert ${alertId} was not delivered (failure ${failures}/${this.MAX_DELIVERY_FAILURES}), keeping it active for the next pass`);
+  }
+
+  registerDeliverySuccess(alertId) {
+    this.deliveryFailures.delete(alertId);
   }
 
   // Returns true only when the message actually reached Discord
@@ -329,6 +368,39 @@ class AlertsMonitor {
     return null;
   }
 
+  // Drop per-alert and per-collection state that no longer belongs to an active
+  // alert, otherwise these maps grow for the lifetime of the process
+  pruneStaleState(activeAlerts) {
+    const activeAlertIds = new Set(activeAlerts.map(a => a.id));
+    const perAlertMaps = [
+      this.seenListingIdentities,
+      this.lastCheapestIdentity,
+      this.lastFiredAt,
+      this.deliveryFailures
+    ];
+
+    for (const map of perAlertMaps) {
+      for (const alertId of map.keys()) {
+        if (!activeAlertIds.has(alertId)) {
+          map.delete(alertId);
+        }
+      }
+    }
+
+    // The floor price cache is keyed by collection, so it survives alert
+    // removal - drop entries no active collection alert can still use
+    const activeCacheKeys = new Set(
+      activeAlerts.filter(a => a.type === 'collection').map(a => `${a.slug}-${a.chain}`)
+    );
+    const now = Date.now();
+    for (const [cacheKey, cached] of this.floorPriceCache) {
+      const expired = now - cached.timestamp >= this.FLOOR_PRICE_CACHE_DURATION;
+      if (expired || !activeCacheKeys.has(cacheKey)) {
+        this.floorPriceCache.delete(cacheKey);
+      }
+    }
+  }
+
   // Periodically check listings for token alerts (any_listing, listed_below, listed_above)
   async checkAllTokenListingAlerts() {
     if (!this.initialized) return;
@@ -336,14 +408,7 @@ class AlertsMonitor {
     try {
       const allAlerts = this.alertsDb.getActiveAlerts();
 
-      // Drop dedupe state for alerts that are gone (removed or deactivated),
-      // otherwise the map grows for the lifetime of the process
-      const activeAlertIds = new Set(allAlerts.map(a => a.id));
-      for (const alertId of this.seenListingIdentities.keys()) {
-        if (!activeAlertIds.has(alertId)) {
-          this.seenListingIdentities.delete(alertId);
-        }
-      }
+      this.pruneStaleState(allAlerts);
 
       const tokenAlerts = allAlerts.filter(a => a.type === 'token' && ['any_listing', 'listed_below', 'listed_above'].includes(a.condition));
 
@@ -370,7 +435,7 @@ class AlertsMonitor {
         } else {
           console.log(`💰 Found listing for ${contract}/${tokenId} on ${chain}: ${lowest.price} ETH`);
           for (const alert of alerts) {
-            await this.evaluateTokenListingAlert(alert, lowest.price, lowest.identities);
+            await this.evaluateTokenListingAlert(alert, lowest);
           }
         }
         // Avoid rate limits
@@ -381,12 +446,16 @@ class AlertsMonitor {
     }
   }
 
-  // Returns { price, identities } for the active listings of a token, or null.
+  // Returns { price, identities, cheapestIdentity } for the active listings of a
+  // token, or null.
   // price is the cheapest listing (listed_below / listed_above compare against it).
-  // identities is the Set of order hashes of ALL listings, so a new non-floor
-  // listing is still recognised as new. It is null when at least one listing has
-  // no usable hash - dedupe is then skipped for that pass, because deduping on
-  // price would wrongly suppress a genuinely new listing at the same price.
+  // identities is the Set of order hashes of every listing that has one, so a new
+  // non-floor listing is still recognised as new by any_listing. Listings without
+  // a hash are simply unrepresented - the hashes that are present still work.
+  // cheapestIdentity is the hash of the cheapest listing (null when it has none),
+  // which is what the price-threshold conditions dedupe on. Never fall back to
+  // the price as an identity: it would suppress a genuinely new listing that
+  // happens to be priced the same.
   async fetchTokenLowestListingPrice(chain, contract, tokenId) {
     try {
       const url = `https://api.opensea.io/api/v2/chain/${encodeURIComponent(chain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(tokenId)}/listings?limit=10`;
@@ -415,43 +484,62 @@ class AlertsMonitor {
       const extractIdentity = (l) => l?.order_hash || l?.hash || null;
 
       let min = Infinity;
+      let cheapestIdentity = null;
       const identities = new Set();
-      let identitiesUsable = true;
       for (const l of listings) {
         const p = extractPrice(l);
         if (typeof p === 'number' && isFinite(p) && p > 0) {
+          const identity = extractIdentity(l);
           if (p < min) {
             min = p;
+            cheapestIdentity = identity;
           }
-          const identity = extractIdentity(l);
           if (identity) {
             identities.add(identity);
-          } else {
-            identitiesUsable = false;
           }
         }
       }
       if (!isFinite(min)) return null;
-      return { price: min, identities: identitiesUsable ? identities : null };
+      return { price: min, identities, cheapestIdentity };
     } catch (e) {
       console.error('❌ Error fetching token listings:', e.message);
       return null;
     }
   }
 
-  async evaluateTokenListingAlert(alert, lowestPrice, listingIdentities = null) {
+  async evaluateTokenListingAlert(alert, lowest) {
     const { condition, price: alertPrice, userId, id: alertId, nftName, tokenId } = alert;
+
+    const lowestPrice = lowest?.price ?? null;
+    const listingIdentities = lowest?.identities ?? null;
+    const cheapestIdentity = lowest?.cheapestIdentity ?? null;
 
     console.log(`🔍 Checking token alert ${alertId}: ${nftName} (${tokenId}) - condition: ${condition}, alertPrice: ${alertPrice}, lowestListing: ${lowestPrice}`);
 
-    // Only fire when at least one listing has not been reported for this alert
-    // yet. listingIdentities === null means the hashes were unusable this pass,
-    // in which case dedupe is skipped rather than guessed.
-    if (listingIdentities) {
-      const seen = this.seenListingIdentities.get(alertId);
-      const hasNewListing = [...listingIdentities].some(identity => !seen || !seen.has(identity));
-      if (!hasNewListing) {
-        console.log(`⏭️ Token alert ${alertId} skipped: no new listing since last check`);
+    // The two conditions need different dedupe keys:
+    // - any_listing is about the token gaining ANY unseen order, so it compares
+    //   the whole identity set.
+    // - listed_below / listed_above only ever report the cheapest listing, so
+    //   they must compare that one identity. Using the whole set here would
+    //   re-fire the same unchanged cheapest listing whenever an unrelated order
+    //   appeared on the token.
+    // dedupeApplied stays false when the hashes needed were missing.
+    let dedupeApplied = false;
+
+    if (condition === 'any_listing') {
+      if (listingIdentities && listingIdentities.size > 0) {
+        dedupeApplied = true;
+        const seen = this.seenListingIdentities.get(alertId);
+        const hasNewListing = [...listingIdentities].some(identity => !seen || !seen.has(identity));
+        if (!hasNewListing) {
+          console.log(`⏭️ Token alert ${alertId} skipped: no new listing since last check`);
+          return;
+        }
+      }
+    } else if (cheapestIdentity) {
+      dedupeApplied = true;
+      if (this.lastCheapestIdentity.get(alertId) === cheapestIdentity) {
+        console.log(`⏭️ Token alert ${alertId} skipped: cheapest listing unchanged since last check`);
         return;
       }
     }
@@ -479,6 +567,16 @@ class AlertsMonitor {
       return;
     }
 
+    // No usable hash means no dedupe, and a repeat-mode alert would then ping
+    // every 60 s for as long as the condition holds. Rate-limit instead.
+    if (!dedupeApplied) {
+      const lastFired = this.lastFiredAt.get(alertId);
+      if (lastFired != null && Date.now() - lastFired < this.UNDEDUPED_FIRE_INTERVAL) {
+        console.warn(`⚠️ Token alert ${alertId} suppressed: listings carry no usable hash and it already fired within the last ${this.UNDEDUPED_FIRE_INTERVAL / 60000} minutes`);
+        return;
+      }
+    }
+
     // Prepare lightweight transaction-like data for embed
     const txData = {
       type: 'listing',
@@ -493,16 +591,23 @@ class AlertsMonitor {
     };
     const sent = await this.sendTokenAlert(alert, txData, alertType);
 
-    // A failed delivery must not consume the alert or the dedupe slot
+    // A failed delivery must not consume the alert or the dedupe slot,
+    // but it may not retry forever either
     if (!sent) {
-      console.warn(`⚠️ Token alert ${alertId} was not delivered, keeping it active for the next pass`);
+      await this.registerDeliveryFailure(alert);
       return;
     }
 
+    this.registerDeliverySuccess(alertId);
+    this.lastFiredAt.set(alertId, Date.now());
+
     // Replace rather than merge: hashes that disappeared are dropped, so a
     // delisted-then-relisted item fires again and the set cannot grow unbounded
-    if (listingIdentities) {
+    if (listingIdentities && listingIdentities.size > 0) {
       this.seenListingIdentities.set(alertId, new Set(listingIdentities));
+    }
+    if (cheapestIdentity) {
+      this.lastCheapestIdentity.set(alertId, cheapestIdentity);
     }
 
     // Honor the alert's own mode: only 'repeat' stays active after triggering
@@ -510,6 +615,8 @@ class AlertsMonitor {
       console.log(`🔄 Deactivating token alert ${alertId} (mode: ${alert.mode})`);
       await this.alertsDb.updateAlert(userId, alertId, { active: false, triggeredAt: new Date().toISOString() });
       this.seenListingIdentities.delete(alertId);
+      this.lastCheapestIdentity.delete(alertId);
+      this.lastFiredAt.delete(alertId);
     }
   }
 
@@ -560,8 +667,14 @@ class AlertsMonitor {
 
     if (triggered) {
       console.log(`🚨 TOKEN ALERT TRIGGERED! ${alert.nftName} - ${alertType}`);
-      await this.sendTokenAlert(alert, transactionData, alertType);
-      
+      const sent = await this.sendTokenAlert(alert, transactionData, alertType);
+
+      // A failed delivery must not consume the alert
+      if (!sent) {
+        console.warn(`⚠️ Token alert ${alertId} was not delivered, keeping it active`);
+        return;
+      }
+
       // Deactivate according to mode (repeat keeps active)
       if (alert.mode !== 'repeat') {
         await this.alertsDb.updateAlert(userId, alertId, { active: false, triggeredAt: new Date().toISOString() });

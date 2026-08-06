@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const fetch = require('node-fetch');
 const config = require('../config');
 const AlertsDatabase = require('./alertsDatabase');
@@ -245,7 +245,7 @@ class AlertsCommand {
       // Immediate reply to prevent timeout (send as ephemeral so only the user sees it).
       // Inside the try: a 10062 here must not reject execute() and leave
       // commandManager acknowledging the interaction a second time.
-      await interaction.reply({ content: '⏳ Processing your alert request...', ephemeral: true });
+      await interaction.reply({ content: '⏳ Processing your alert request...', flags: MessageFlags.Ephemeral });
 
       switch (subcommand) {
         case 'collection':
@@ -282,7 +282,7 @@ class AlertsCommand {
         if (interaction.deferred || interaction.replied) {
           await interaction.editReply({ content: errorMessage });
         } else {
-          await interaction.reply({ content: errorMessage, ephemeral: true });
+          await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
         }
       } catch (replyError) {
         console.error('❌ Could not send error response:', replyError?.message ?? replyError);
@@ -418,7 +418,7 @@ class AlertsCommand {
       try {
         await interaction.followUp({ 
           content: `✅ Collection alert created successfully for ${collectionData.name}!`, 
-          ephemeral: true 
+          flags: MessageFlags.Ephemeral 
         });
       } catch (followUpError) {
         console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
@@ -596,7 +596,7 @@ class AlertsCommand {
       try {
         await interaction.followUp({ 
           content: `✅ Token alert created successfully for ${nft.name}!`, 
-          ephemeral: true 
+          flags: MessageFlags.Ephemeral 
         });
       } catch (followUpError) {
         console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
@@ -748,7 +748,7 @@ class AlertsCommand {
       try {
         await interaction.followUp({ 
           content: `✅ Traits alert created successfully for ${collectionData.name}!`, 
-          ephemeral: true 
+          flags: MessageFlags.Ephemeral 
         });
       } catch (followUpError) {
         console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
@@ -999,7 +999,7 @@ class AlertsCommand {
             // Try to follow up if the interaction has expired
             await interaction.followUp({ 
               content: '❌ Failed to remove your alerts channel. Please try again later.', 
-              ephemeral: true 
+              flags: MessageFlags.Ephemeral 
             });
           }
         } catch (replyError) {
@@ -1075,7 +1075,7 @@ class AlertsCommand {
         try {
           await interaction.followUp({ 
             content: '✅ Alerts statistics retrieved successfully!', 
-            ephemeral: true 
+            flags: MessageFlags.Ephemeral 
           });
         } catch (followUpError) {
           console.error(`❌ Could not send follow-up response: ${followUpError.message}`);
@@ -1094,7 +1094,7 @@ class AlertsCommand {
           // Try to follow up if the interaction has expired
           await interaction.followUp({ 
             content: '❌ Failed to retrieve alerts statistics.', 
-            ephemeral: true 
+            flags: MessageFlags.Ephemeral 
           });
         }
       } catch (replyError) {
@@ -1124,7 +1124,7 @@ class AlertsCommand {
       if (interaction.replied || interaction.deferred) {
         await interaction.editReply({ content: message, embeds: [] });
       } else {
-        await interaction.reply({ content: message, ephemeral: true });
+        await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
       }
     } catch (replyError) {
       console.error(`❌ Could not send validation error: ${replyError.message}`);

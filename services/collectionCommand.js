@@ -44,7 +44,7 @@ class CollectionCommand {
     try {
       const sub = interaction.options.getSubcommand();
       if (sub !== 'collection') {
-        await interaction.reply({ content: '❌ Unknown check subcommand.', ephemeral: true });
+        await interaction.reply({ content: '❌ Unknown check subcommand.', flags: MessageFlags.Ephemeral });
         return;
       }
 

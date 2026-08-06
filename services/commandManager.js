@@ -59,7 +59,7 @@ class CommandManager {
       const available = Array.from(this.commands.keys());
       console.error(`❌ Unknown command: ${commandName}. Available: ${available.join(', ') || '(none)'}`);
       try {
-        await interaction.reply({ content: '⚠️ Commands are updating. Please try again in a moment.', ephemeral: true });
+        await interaction.reply({ content: '⚠️ Commands are updating. Please try again in a moment.', flags: MessageFlags.Ephemeral });
       } catch {}
       return;
     }
@@ -72,9 +72,14 @@ class CommandManager {
       const errorMessage = '❌ An unexpected error occurred while running the command.';
 
       // Some commands defer publicly, so editReply would post the error for
-      // everyone. Drop the placeholder and follow up privately instead.
+      // everyone. Drop the placeholder and follow up privately instead - but
+      // only when the placeholder is all there is. After a real editReply both
+      // deferred and replied are true, and deleting would destroy the result
+      // the command already delivered.
       try {
-        if (interaction.deferred || interaction.replied) {
+        if (interaction.replied) {
+          await interaction.followUp({ content: errorMessage, flags: MessageFlags.Ephemeral });
+        } else if (interaction.deferred) {
           await interaction.deleteReply().catch(() => {});
           await interaction.followUp({ content: errorMessage, flags: MessageFlags.Ephemeral });
         } else {
