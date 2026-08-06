@@ -2,16 +2,18 @@
 
 const config = require('./config');
 const DiscordNotifier = require('./services/discordNotifier');
+const registry = require('./services/registry');
+
+let notifier = null;
 
 async function startDiscordBot() {
   console.log('🤖 Starting Discord Bot with Slash Commands...');
   console.log('='.repeat(50));
-  
-  let notifier;
-  
+
   try {
     // Create Discord notifier instance
     notifier = new DiscordNotifier();
+    registry.setDiscordNotifier(notifier);
     console.log('✅ DiscordNotifier instance created');
     
     // Connect to Discord
@@ -49,6 +51,15 @@ process.on('SIGTERM', async () => {
     await notifier.disconnect();
   }
   process.exit(0);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught exception:', error);
+  process.exit(1);
 });
 
 // Start the bot

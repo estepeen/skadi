@@ -7,6 +7,16 @@ if (!process.env.OPENSEA_API_KEY) {
   process.exit(1);
 }
 
+if (!process.env.DISCORD_BOT_TOKEN) {
+  console.error('❌ DISCORD_BOT_TOKEN is not set. Add it to your .env file.');
+  process.exit(1);
+}
+
+if (!process.env.DISCORD_CHANNEL_ID) {
+  console.error('❌ DISCORD_CHANNEL_ID is not set. Add it to your .env file.');
+  process.exit(1);
+}
+
 /**
  * Load ignored collections from external file
  * @returns {Array<string>} Array of ignored collection slugs (lowercase)

@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const fetch = require('node-fetch');
 const config = require('../config');
 const AlertsDatabase = require('./alertsDatabase');
+const registry = require('./registry');
 
 class AlertsCommand {
   constructor(alertsDatabase = null) {
@@ -289,6 +290,12 @@ class AlertsCommand {
 
   async handleCollectionAlert(interaction) {
     const slug = interaction.options.getString('slug');
+
+    if (!this.isValidSlug(slug)) {
+      await this.replyInvalidInput(interaction, `❌ **Invalid collection slug**: \`${slug}\`\nSlugs may only contain letters, numbers and dashes.`);
+      return;
+    }
+
     const condition = interaction.options.getString('condition');
     const price = interaction.options.getNumber('price');
     const chain = interaction.options.getString('chain') || 'ethereum';
@@ -300,7 +307,7 @@ class AlertsCommand {
     console.log(`🔍 Fetching collection data: ${slug} on ${chain}`);
 
     // Get channel manager from discord notifier
-    const discordNotifier = require('../index').getDiscordNotifier();
+    const discordNotifier = registry.getDiscordNotifier();
     const channelManager = discordNotifier?.getChannelManager();
     
     if (!channelManager) {
@@ -330,7 +337,7 @@ class AlertsCommand {
     };
 
     try {
-      const collectionUrl = `https://api.opensea.io/api/v2/collections/${slug}`;
+      const collectionUrl = `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`;
       console.log(`🔍 Fetching collection from: ${collectionUrl}`);
 
       const collectionRes = await fetch(collectionUrl, {
@@ -420,6 +427,24 @@ class AlertsCommand {
   async handleTokenAlert(interaction) {
     const slug = interaction.options.getString('slug');
     const tokenIdInput = interaction.options.getString('token_id');
+
+    if (!this.isValidSlug(slug)) {
+      await this.replyInvalidInput(interaction, `❌ **Invalid collection slug**: \`${slug}\`\nSlugs may only contain letters, numbers and dashes.`);
+      return;
+    }
+
+    const tokenIds = tokenIdInput.split(',').map(s => s.trim()).filter(Boolean);
+
+    if (tokenIds.length === 0 || !tokenIds.every(id => this.isValidTokenId(id))) {
+      await this.replyInvalidInput(interaction, `❌ **Invalid token ID**: \`${tokenIdInput}\`\nToken IDs must be numbers, comma-separated for multiple.`);
+      return;
+    }
+
+    if (tokenIds.length > AlertsCommand.MAX_TOKEN_IDS) {
+      await this.replyInvalidInput(interaction, `❌ **Too many token IDs**: ${tokenIds.length}\nA maximum of ${AlertsCommand.MAX_TOKEN_IDS} token IDs can be set per command.`);
+      return;
+    }
+
     const condition = interaction.options.getString('condition');
     const price = interaction.options.getNumber('price');
     const chain = interaction.options.getString('chain') || 'ethereum';
@@ -428,11 +453,10 @@ class AlertsCommand {
     const userId = interaction.user.id;
     const username = interaction.user.username;
 
-    const tokenIds = tokenIdInput.split(',').map(s => s.trim()).filter(Boolean);
     console.log(`🔍 Fetching NFT data by slug: ${slug}/${tokenIds.join(',')} on ${chain}`);
 
     // Get channel manager from discord notifier
-    const discordNotifier = require('../index').getDiscordNotifier();
+    const discordNotifier = registry.getDiscordNotifier();
     const channelManager = discordNotifier?.getChannelManager();
     
     if (!channelManager) {
@@ -466,7 +490,7 @@ class AlertsCommand {
 
     try {
       // First get collection info by slug to determine contract
-      const collectionUrl = `https://api.opensea.io/api/v2/collections/${slug}`;
+      const collectionUrl = `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`;
       const collectionRes = await fetch(collectionUrl, { headers: { 'X-API-KEY': config.opensea.apiKey, 'Accept': 'application/json' } });
       if (collectionRes.ok) {
         const collectionData = await collectionRes.json();
@@ -479,7 +503,7 @@ class AlertsCommand {
       }
 
       const firstId = tokenIds[0];
-      const nftUrl = `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}/nfts/${firstId}`;
+      const nftUrl = `https://api.opensea.io/api/v2/chain/${encodeURIComponent(chain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(firstId)}`;
       console.log(`🔍 Fetching NFT from: ${nftUrl}`);
 
       const nftRes = await fetch(nftUrl, {
@@ -580,6 +604,12 @@ class AlertsCommand {
 
   async handleTraitsAlert(interaction) {
     const slug = interaction.options.getString('slug');
+
+    if (!this.isValidSlug(slug)) {
+      await this.replyInvalidInput(interaction, `❌ **Invalid collection slug**: \`${slug}\`\nSlugs may only contain letters, numbers and dashes.`);
+      return;
+    }
+
     const traitsInput = interaction.options.getString('traits');
     const logic = interaction.options.getString('logic');
     const condition = interaction.options.getString('condition');
@@ -608,7 +638,7 @@ class AlertsCommand {
     }
 
     // Validate collection
-    const collectionUrl = `https://api.opensea.io/api/v2/collections/${slug}`;
+    const collectionUrl = `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`;
     const collectionRes = await fetch(collectionUrl, {
       headers: { 'X-API-KEY': config.opensea.apiKey, 'Accept': 'application/json' }
     });
@@ -631,7 +661,7 @@ class AlertsCommand {
     const username = interaction.user.username;
 
     // Get channel manager and create user channel
-    const discordNotifier = require('../index').getDiscordNotifier();
+    const discordNotifier = registry.getDiscordNotifier();
     const channelManager = discordNotifier?.getChannelManager();
     
     if (!channelManager) {
@@ -919,7 +949,7 @@ class AlertsCommand {
     console.log(`🔧 Channel management: ${action} for user ${username}`);
 
     // Get channel manager from discord notifier
-    const discordNotifier = require('../index').getDiscordNotifier();
+    const discordNotifier = registry.getDiscordNotifier();
     const channelManager = discordNotifier?.getChannelManager();
     
     if (!channelManager) {
@@ -993,7 +1023,7 @@ class AlertsCommand {
   async handleStatsCommand(interaction) {
     try {
       // Get alerts monitor from discord notifier
-      const discordNotifier = require('../index').getDiscordNotifier();
+      const discordNotifier = registry.getDiscordNotifier();
       const alertsMonitor = discordNotifier?.getAlertsMonitor();
       
       if (!alertsMonitor) {
@@ -1074,6 +1104,33 @@ class AlertsCommand {
   generateAlertId() {
     return Math.random().toString(36).substring(2, 10).toUpperCase();
   }
+
+  // Collection slugs are letters/numbers/dashes only - anything else could
+  // redirect an authenticated OpenSea request to another path
+  isValidSlug(slug) {
+    return typeof slug === 'string' && /^[a-z0-9][a-z0-9-]{0,99}$/i.test(slug);
+  }
+
+  // Token IDs are unsigned integers (uint256 is at most 78 decimal digits)
+  isValidTokenId(tokenId) {
+    return typeof tokenId === 'string' && /^\d{1,78}$/.test(tokenId);
+  }
+
+  // Report a rejected input on the already-acknowledged (ephemeral) interaction
+  async replyInvalidInput(interaction, message) {
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply({ content: message, embeds: [] });
+      } else {
+        await interaction.reply({ content: message, ephemeral: true });
+      }
+    } catch (replyError) {
+      console.error(`❌ Could not send validation error: ${replyError.message}`);
+    }
+  }
 }
+
+// Maximum number of token IDs accepted in a single /alerts token command
+AlertsCommand.MAX_TOKEN_IDS = 20;
 
 module.exports = AlertsCommand;

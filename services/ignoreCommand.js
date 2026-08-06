@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const registry = require('./registry');
 
 /**
  * Command to manage ignored NFT collections
@@ -347,8 +348,7 @@ class IgnoreCommand {
       
       // Also reload NFTTracker config
       try {
-        const { getNFTTracker } = require('../index');
-        const nftTracker = getNFTTracker();
+        const nftTracker = registry.getNFTTracker();
         if (nftTracker && nftTracker.reloadConfig) {
           nftTracker.reloadConfig();
           console.log('✅ NFTTracker config reloaded successfully');

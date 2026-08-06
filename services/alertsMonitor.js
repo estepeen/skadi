@@ -13,6 +13,8 @@ class AlertsMonitor {
     this.FLOOR_PRICE_CACHE_DURATION = 60 * 1000; // 1 minute
     this.floorPriceInterval = null;
     this.tokenListingInterval = null;
+    this.stopped = false;
+    this.lastListingIdentity = new Map(); // alertId -> identity of last seen cheapest listing
   }
 
   async initialize() {
@@ -38,35 +40,54 @@ class AlertsMonitor {
   }
 
   startFloorPriceMonitoring() {
-    if (this.floorPriceInterval) clearInterval(this.floorPriceInterval);
-    // Check floor prices every 1 minute
-    this.floorPriceInterval = setInterval(() => {
-      console.log('⏰ Floor price monitoring interval triggered');
+    if (this.floorPriceInterval) clearTimeout(this.floorPriceInterval);
+    this.stopped = false;
+
+    // Self-rescheduling loop: a pass must finish before the next one is queued,
+    // otherwise slow passes overlap and compound the OpenSea request rate
+    const runPass = async () => {
+      console.log('⏰ Floor price monitoring pass triggered');
       console.log(`🔍 AlertsMonitor initialized: ${this.initialized}`);
       console.log(`🔍 Database initialized: ${this.alertsDb.initialized}`);
-      this.checkAllCollectionAlerts();
-    }, 60 * 1000);
+      try {
+        await this.checkAllCollectionAlerts();
+      } catch (error) {
+        console.error('❌ Floor price monitoring pass failed:', error.message);
+      }
+      if (this.stopped) return;
+      this.floorPriceInterval = setTimeout(runPass, 60 * 1000);
+    };
 
+    this.floorPriceInterval = setTimeout(runPass, 60 * 1000);
     console.log('🔄 Started periodic floor price monitoring (every 1 minute)');
   }
 
   startTokenListingMonitoring() {
-    if (this.tokenListingInterval) clearInterval(this.tokenListingInterval);
-    // Check token listings every 1 minute
-    this.tokenListingInterval = setInterval(() => {
-      this.checkAllTokenListingAlerts();
-    }, 60 * 1000);
+    if (this.tokenListingInterval) clearTimeout(this.tokenListingInterval);
+    this.stopped = false;
 
+    const runPass = async () => {
+      try {
+        await this.checkAllTokenListingAlerts();
+      } catch (error) {
+        console.error('❌ Token listing monitoring pass failed:', error.message);
+      }
+      if (this.stopped) return;
+      this.tokenListingInterval = setTimeout(runPass, 60 * 1000);
+    };
+
+    this.tokenListingInterval = setTimeout(runPass, 60 * 1000);
     console.log('🔄 Started periodic token listing monitoring (every 1 minute)');
   }
 
   stop() {
+    this.stopped = true;
     if (this.floorPriceInterval) {
-      clearInterval(this.floorPriceInterval);
+      clearTimeout(this.floorPriceInterval);
       this.floorPriceInterval = null;
     }
     if (this.tokenListingInterval) {
-      clearInterval(this.tokenListingInterval);
+      clearTimeout(this.tokenListingInterval);
       this.tokenListingInterval = null;
     }
     console.log('🛑 Alerts Monitor stopped');
@@ -231,7 +252,7 @@ class AlertsMonitor {
 
     try {
       // Fetch from OpenSea API
-      const url = `https://api.opensea.io/api/v2/collections/${slug}/stats`;
+      const url = `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats`;
       console.log(`🌐 Fetching from: ${url}`);
       
       const response = await fetch(url, {
@@ -247,8 +268,8 @@ class AlertsMonitor {
       }
 
       const data = await response.json();
-      console.log(`📊 OpenSea API response for ${slug}:`, JSON.stringify(data, null, 2));
       const floorPrice = data.total?.floor_price;
+      console.log(`📊 OpenSea stats for ${slug}: floor ${floorPrice ?? 'n/a'}`);
 
       if (floorPrice && floorPrice > 0) {
         console.log(`✅ Got floor price for ${slug}: ${floorPrice} ETH`);
@@ -261,7 +282,6 @@ class AlertsMonitor {
         return floorPrice;
       } else {
         console.log(`⚠️ No floor price data for ${slug} on ${chain}`);
-        console.log(`📊 Response structure:`, JSON.stringify(data, null, 2));
       }
     } catch (error) {
       console.error(`❌ Error fetching floor price for ${slug} on ${chain}:`, error.message);
@@ -299,9 +319,9 @@ class AlertsMonitor {
           console.log(`⚠️ No active listings for ${contract}/${tokenId} on ${chain}`);
           // Trigger any_listing if listing disappeared? No. Only when new listing appears; handled on next cycles
         } else {
-          console.log(`💰 Found listing for ${contract}/${tokenId} on ${chain}: ${lowest} ETH`);
+          console.log(`💰 Found listing for ${contract}/${tokenId} on ${chain}: ${lowest.price} ETH`);
           for (const alert of alerts) {
-            await this.evaluateTokenListingAlert(alert, lowest);
+            await this.evaluateTokenListingAlert(alert, lowest.price, lowest.identity);
           }
         }
         // Avoid rate limits
@@ -312,9 +332,12 @@ class AlertsMonitor {
     }
   }
 
+  // Returns { price, identity } for the cheapest active listing, or null.
+  // identity is a stable handle for that listing so repeat alerts can tell a
+  // brand new listing apart from the same one seen on the previous pass.
   async fetchTokenLowestListingPrice(chain, contract, tokenId) {
     try {
-      const url = `https://api.opensea.io/api/v2/chain/${chain}/contract/${contract}/nfts/${tokenId}/listings?limit=10`;
+      const url = `https://api.opensea.io/api/v2/chain/${encodeURIComponent(chain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(tokenId)}/listings?limit=10`;
       const res = await fetch(url, {
         headers: { 'X-API-KEY': config.opensea.apiKey || '', 'Accept': 'application/json' }
       });
@@ -335,26 +358,41 @@ class AlertsMonitor {
         if (l?.protocol_data?.parameters?.startAmount) return Number(l.protocol_data.parameters.startAmount);
         return NaN;
       };
+      // Prefer an order hash so the same listing is recognised across passes
+      const extractIdentity = (l, price) => {
+        return l?.order_hash || l?.protocol_data?.parameters?.orderHash || l?.hash || `${price}`;
+      };
+
       let min = Infinity;
+      let minListing = null;
       for (const l of listings) {
         const p = extractPrice(l);
         if (typeof p === 'number' && isFinite(p) && p > 0) {
-          if (p < min) min = p;
+          if (p < min) {
+            min = p;
+            minListing = l;
+          }
         }
       }
       if (!isFinite(min)) return null;
-      return min;
+      return { price: min, identity: extractIdentity(minListing, min) };
     } catch (e) {
       console.error('❌ Error fetching token listings:', e.message);
       return null;
     }
   }
 
-  async evaluateTokenListingAlert(alert, lowestPrice) {
+  async evaluateTokenListingAlert(alert, lowestPrice, listingIdentity = null) {
     const { condition, price: alertPrice, userId, id: alertId, nftName, tokenId } = alert;
-    
+
     console.log(`🔍 Checking token alert ${alertId}: ${nftName} (${tokenId}) - condition: ${condition}, alertPrice: ${alertPrice}, lowestListing: ${lowestPrice}`);
-    
+
+    // Only fire on a listing we have not already reported for this alert
+    if (listingIdentity != null && this.lastListingIdentity.get(alertId) === listingIdentity) {
+      console.log(`⏭️ Token alert ${alertId} skipped: listing unchanged since last check`);
+      return;
+    }
+
     let triggered = false;
     let alertType = 'LISTED';
 
@@ -391,9 +429,16 @@ class AlertsMonitor {
       timestamp: new Date().toISOString()
     };
     await this.sendTokenAlert(alert, txData, alertType);
-    // Keep any_listing active for future listings; others deactivate
-    if (condition !== 'any_listing') {
+
+    if (listingIdentity != null) {
+      this.lastListingIdentity.set(alertId, listingIdentity);
+    }
+
+    // Honor the alert's own mode: only 'repeat' stays active after triggering
+    if (alert.mode !== 'repeat') {
+      console.log(`🔄 Deactivating token alert ${alertId} (mode: ${alert.mode})`);
       await this.alertsDb.updateAlert(userId, alertId, { active: false, triggeredAt: new Date().toISOString() });
+      this.lastListingIdentity.delete(alertId);
     }
   }
 

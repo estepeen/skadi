@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js'
 const fetch = require('node-fetch');
 const config = require('../config');
 const CryptoPriceService = require('./cryptoPriceService');
+const registry = require('./registry');
 
 class CollectionCommand {
   constructor() {
@@ -47,14 +48,15 @@ class CollectionCommand {
         return;
       }
 
+      // Acknowledge within Discord's 3s window - the fetches below take longer
+      await interaction.deferReply();
+
       const slug = interaction.options.getString('slug', true);
       const chain = interaction.options.getString('chain') || 'ethereum';
 
       console.log(`🔍 Collection command executed for: ${slug} on ${chain}`);
       console.log(`🔍 Fetching collection from: https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`);
       console.log(`🔍 Fetching stats from: https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats`);
-
-      // Don't defer reply - we'll reply directly when ready
 
       // 1) Collection detail (name, fees, total_supply, odkazy)
       const colRes = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`, {
@@ -100,23 +102,25 @@ class CollectionCommand {
       if (creatorFees.length === 0) {
         console.log(`🔍 No creator fees found in fees array, trying alternative methods...`);
         
-        // Try to get creator fees from NFTTracker
+        // Try to get creator fees from the shared NFTTracker instance
         try {
-          const NFTTracker = require('./nftTracker');
-          const nftTracker = new NFTTracker();
-          const creatorFeesInfo = await nftTracker.getCollectionCreatorFees(slug, chain);
-          
-          if (creatorFeesInfo && creatorFeesInfo.percentage !== null) {
-            // Create a synthetic creator fee entry
-            creatorFees.push({
-              fee: creatorFeesInfo.percentage,
-              recipient: 'Creator',
-              required: false
-            });
-            console.log(`✅ Found creator fees via NFTTracker: ${creatorFeesInfo.percentage}%`);
+          const nftTracker = registry.getNFTTracker();
+
+          if (!nftTracker) {
+            console.log('⚠️ NFTTracker not available, skipping creator fees fallback');
+          } else {
+            const creatorFeesInfo = await nftTracker.getCollectionCreatorFees(slug, chain);
+
+            if (creatorFeesInfo && creatorFeesInfo.percentage !== null) {
+              // Create a synthetic creator fee entry
+              creatorFees.push({
+                fee: creatorFeesInfo.percentage,
+                recipient: 'Creator',
+                required: false
+              });
+              console.log(`✅ Found creator fees via NFTTracker: ${creatorFeesInfo.percentage}%`);
+            }
           }
-          
-          await nftTracker.disconnect();
         } catch (error) {
           console.log(`⚠️ Could not fetch creator fees via NFTTracker: ${error.message}`);
         }
@@ -271,15 +275,17 @@ class CollectionCommand {
 
       // Send the response directly
       try {
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
         console.log(`✅ Collection command completed successfully for ${slug}`);
       } catch (replyError) {
         console.error('❌ Could not send response:', replyError.message);
-        // Try to send a simple reply as fallback
+        // Fall back to a private summary: editReply cannot be made ephemeral
+        // after a public defer, so drop the placeholder and follow up privately
         try {
-          await interaction.reply({ 
-            content: `📊 **Collection ${name}**\n🎯 Floor: ${fmtEth(floor)}\n🪙 Creator Fee: ${feeList(creatorFees)}\n🔢 Supply: ${fmt(totalSupply)}`, 
-            flags: MessageFlags.Ephemeral 
+          await interaction.deleteReply().catch(() => {});
+          await interaction.followUp({
+            content: `📊 **Collection ${name}**\n🎯 Floor: ${fmtEth(floor)}\n🪙 Creator Fee: ${feeList(creatorFees)}\n🔢 Supply: ${fmt(totalSupply)}`,
+            flags: MessageFlags.Ephemeral
           });
         } catch (fallbackError) {
           console.error('❌ Could not send fallback response:', fallbackError.message);
@@ -297,9 +303,15 @@ class CollectionCommand {
         errorMessage = '❌ OpenSea API authentication error. Please check your API key.';
       }
       
-      // Try to send error message
+      // Try to send error message privately. deferReply() itself is inside the
+      // try above, so the interaction may not be acknowledged at all yet.
       try {
-        await interaction.reply({ content: errorMessage, ephemeral: true });
+        if (interaction.deferred || interaction.replied) {
+          await interaction.deleteReply().catch(() => {});
+          await interaction.followUp({ content: errorMessage, flags: MessageFlags.Ephemeral });
+        } else {
+          await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
+        }
       } catch (replyError) {
         console.error('❌ Could not send error message:', replyError.message);
       }
