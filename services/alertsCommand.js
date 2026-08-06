@@ -388,6 +388,12 @@ class AlertsCommand {
       mode: mode
     };
 
+    // Re-check the cap: the check at the top of this handler is separated from
+    // here by channel creation and an OpenSea round-trip
+    if (await this.enforceAlertLimit(interaction, 1)) {
+      return;
+    }
+
     // Save to database
     await this.alertsDb.addAlert(alert);
     // Log the id/type only - the alert object carries userId, username and
@@ -571,6 +577,13 @@ class AlertsCommand {
       pendingAlerts.push(alert);
       createdAlertIds.push(alertId);
     }
+    // Re-check the cap immediately before writing. The check at the top of this
+    // handler is separated from here by channel creation and two OpenSea
+    // round-trips, so two commands issued back to back both saw the old count.
+    if (await this.enforceAlertLimit(interaction, pendingAlerts.length)) {
+      return;
+    }
+
     // One write for the whole batch: addAlert() rewrites the entire database
     // file per row, which is quadratic in the number of token IDs
     await this.alertsDb.addAlerts(pendingAlerts);
@@ -722,6 +735,12 @@ class AlertsCommand {
       active: true,
       mode: mode
     };
+
+    // Re-check the cap: the check at the top of this handler is separated from
+    // here by channel creation and an OpenSea round-trip
+    if (await this.enforceAlertLimit(interaction, 1)) {
+      return;
+    }
 
     // Save to database
     await this.alertsDb.addAlert(alert);

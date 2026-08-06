@@ -648,23 +648,20 @@ class AlertsMonitor {
   }
 
   async checkTokenAlert(alert, transactionData) {
-    const { condition, price: alertPrice, userId, id: alertId } = alert;
+    const { condition, userId, id: alertId } = alert;
     const transactionPrice = transactionData.priceUSD || 0;
     let triggered = false;
     let alertType = '';
 
-    // Handle sales (from NFT tracker)
-    if (transactionData.type === 'sale') {
-      if (condition === 'sold' && transactionPrice > 0) {
-        triggered = true;
-        alertType = 'SOLD';
-      } else if (condition === 'listed_below' && transactionPrice < alertPrice && transactionPrice > 0) {
-        triggered = true;
-        alertType = 'SOLD BELOW';
-      } else if (condition === 'listed_above' && transactionPrice > alertPrice) {
-        triggered = true;
-        alertType = 'SOLD ABOVE';
-      }
+    // Only 'sold' is evaluated here. listed_below / listed_above belong to
+    // evaluateTokenListingAlert, which compares native-token listing prices
+    // against the native-token threshold the user entered. This path only has
+    // transactionData.priceUSD, so comparing it to alert.price would pit USD
+    // against ETH - a 1 ETH "listed_above" would match a $2500 sale and then
+    // deactivate itself, destroying a listing alert that was working.
+    if (transactionData.type === 'sale' && condition === 'sold' && transactionPrice > 0) {
+      triggered = true;
+      alertType = 'SOLD';
     }
 
     if (triggered) {
