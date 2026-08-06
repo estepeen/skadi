@@ -1,5 +1,5 @@
 const AlertsDatabase = require('./alertsDatabase');
-const fetch = require('node-fetch');
+const { fetchWithRetry } = require('../utils/httpClient');
 const config = require('../config');
 
 class AlertsMonitor {
@@ -9,7 +9,9 @@ class AlertsMonitor {
     this.initialized = false;
     this.floorPriceCache = new Map(); // slug-chain -> { price, timestamp }
     this.FLOOR_PRICE_CHECK_INTERVAL = 60 * 1000; // 1 minute
-    this.FLOOR_PRICE_CACHE_DURATION = 60 * 1000; // 1 minute
+    // Must outlive the 60 s pass interval, otherwise every entry is pruned
+    // before a later pass can ever read it and the cache never hits
+    this.FLOOR_PRICE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
     this.floorPriceInterval = null;
     this.tokenListingInterval = null;
     // Each loop owns its stop flag and generation counter so restarting one
@@ -333,7 +335,7 @@ class AlertsMonitor {
       const url = `https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats`;
       console.log(`🌐 Fetching from: ${url}`);
       
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         headers: {
           'X-API-KEY': config.opensea.apiKey || '',
           'Accept': 'application/json'
@@ -459,7 +461,7 @@ class AlertsMonitor {
   async fetchTokenLowestListingPrice(chain, contract, tokenId) {
     try {
       const url = `https://api.opensea.io/api/v2/chain/${encodeURIComponent(chain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(tokenId)}/listings?limit=10`;
-      const res = await fetch(url, {
+      const res = await fetchWithRetry(url, {
         headers: { 'X-API-KEY': config.opensea.apiKey || '', 'Accept': 'application/json' }
       });
       if (!res.ok) {
@@ -669,11 +671,16 @@ class AlertsMonitor {
       console.log(`🚨 TOKEN ALERT TRIGGERED! ${alert.nftName} - ${alertType}`);
       const sent = await this.sendTokenAlert(alert, transactionData, alertType);
 
-      // A failed delivery must not consume the alert
+      // A failed delivery must not consume the alert, but it shares the same
+      // 5-strike ceiling as the other senders - and a success here must reset
+      // the counter, otherwise a streak from the listing loop survives and the
+      // next failure there deactivates an alert that is delivering fine
       if (!sent) {
-        console.warn(`⚠️ Token alert ${alertId} was not delivered, keeping it active`);
+        await this.registerDeliveryFailure(alert);
         return;
       }
+
+      this.registerDeliverySuccess(alertId);
 
       // Deactivate according to mode (repeat keeps active)
       if (alert.mode !== 'repeat') {

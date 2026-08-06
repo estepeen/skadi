@@ -11,9 +11,19 @@ class CryptoPriceService {
     ];
     this.updateInterval = null;
     this.rotationInterval = null;
+    // /check collection calls fetchPrices() on every invocation, which is
+    // uncached traffic to CoinGecko's free tier. Serve a recent result instead.
+    this.lastFetchAt = 0;
+    this.PRICE_CACHE_TTL = 60 * 1000; // 1 minute
   }
 
   async fetchPrices() {
+    const now = Date.now();
+    if (Object.keys(this.prices).length > 0 && now - this.lastFetchAt < this.PRICE_CACHE_TTL) {
+      console.log('📊 Using cached crypto prices');
+      return this.prices;
+    }
+
     try {
       const cryptoIds = this.cryptos.map(crypto => crypto.id).join(',');
       const url = `https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds}&vs_currencies=usd&include_24hr_change=true`;
@@ -45,7 +55,9 @@ class CryptoPriceService {
         }
       });
 
-      console.log('📊 Updated crypto prices:', Object.keys(this.prices).map(symbol => 
+      this.lastFetchAt = Date.now();
+
+      console.log('📊 Updated crypto prices:', Object.keys(this.prices).map(symbol =>
         `${symbol}: $${this.prices[symbol].price.toLocaleString()}`
       ).join(', '));
 

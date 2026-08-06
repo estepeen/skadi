@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const crypto = require('crypto');
 const fetch = require('node-fetch');
 const config = require('../config');
 const AlertsDatabase = require('./alertsDatabase');
@@ -291,6 +292,8 @@ class AlertsCommand {
   }
 
   async handleCollectionAlert(interaction) {
+    if (await this.enforceAlertLimit(interaction)) return;
+
     const slug = interaction.options.getString('slug');
 
     if (!this.isValidSlug(slug)) {
@@ -387,7 +390,9 @@ class AlertsCommand {
 
     // Save to database
     await this.alertsDb.addAlert(alert);
-    console.log('📝 Alert created and saved:', alert);
+    // Log the id/type only - the alert object carries userId, username and
+    // channelId into a log file every member's alerts share
+    console.log(`📝 Alert created and saved: ${alertId} (collection)`);
 
     const embed = new EmbedBuilder()
       .setTitle('🔔 Collection Alert Created')
@@ -446,6 +451,10 @@ class AlertsCommand {
       await this.replyInvalidInput(interaction, `❌ **Too many token IDs**: ${tokenIds.length}\nA maximum of ${AlertsCommand.MAX_TOKEN_IDS} token IDs can be set per command.`);
       return;
     }
+
+    // Checked against the full batch so a command that would overshoot the cap
+    // is rejected outright rather than applied halfway
+    if (await this.enforceAlertLimit(interaction, tokenIds.length)) return;
 
     const condition = interaction.options.getString('condition');
     const price = interaction.options.getNumber('price');
@@ -536,8 +545,11 @@ class AlertsCommand {
     const nativeSymbol = this.getNativeSymbol(chain);
 
     const createdAlertIds = [];
+    const pendingAlerts = [];
+    const reservedIds = new Set();
     for (const id of tokenIds) {
-      const alertId = this.generateAlertId();
+      const alertId = this.generateAlertId(reservedIds);
+      reservedIds.add(alertId);
       const alert = {
         id: alertId,
         userId: interaction.user.id,
@@ -556,9 +568,12 @@ class AlertsCommand {
         active: true,
         mode: mode
       };
-      await this.alertsDb.addAlert(alert);
+      pendingAlerts.push(alert);
       createdAlertIds.push(alertId);
     }
+    // One write for the whole batch: addAlert() rewrites the entire database
+    // file per row, which is quadratic in the number of token IDs
+    await this.alertsDb.addAlerts(pendingAlerts);
     console.log('📝 Token alerts created and saved:', createdAlertIds);
 
     const conditionText = {
@@ -573,7 +588,9 @@ class AlertsCommand {
       .setDescription(`Alert set for **${tokenIds.length}** token${tokenIds.length>1?'s':''} from **${nft.collection || 'Unknown Collection'}**`)
       .setColor(0x00ff88)
       .addFields(
-        { name: '📦 Collection', value: `[${nft.collection || 'Unknown'}](https://opensea.io/collection/${nft.collection})`, inline: true },
+        // Link on the validated slug, not the display name: a multi-word name
+        // produces a broken OpenSea URL
+        { name: '📦 Collection', value: `[${nft.collection || 'Unknown'}](https://opensea.io/collection/${encodeURIComponent(slug)})`, inline: true },
         { name: '🆔 Token ID', value: tokenIds.map(id=>`[#${id}](https://opensea.io/assets/${chain}/${contract || 'contract'}/${id})`).join(', '), inline: true },
         { name: '⛓️ Chain', value: chain.charAt(0).toUpperCase() + chain.slice(1), inline: true },
         { name: '📈 Condition', value: conditionText[condition], inline: true },
@@ -605,6 +622,8 @@ class AlertsCommand {
   }
 
   async handleTraitsAlert(interaction) {
+    if (await this.enforceAlertLimit(interaction)) return;
+
     const slug = interaction.options.getString('slug');
 
     if (!this.isValidSlug(slug)) {
@@ -706,7 +725,7 @@ class AlertsCommand {
 
     // Save to database
     await this.alertsDb.addAlert(alert);
-    console.log('📝 Traits alert created and saved:', alert);
+    console.log(`📝 Alert created and saved: ${alertId} (traits)`);
 
     const conditionText = {
       'listed_below': 'Listed below price',
@@ -1103,8 +1122,42 @@ class AlertsCommand {
     }
   }
 
-  generateAlertId() {
-    return Math.random().toString(36).substring(2, 10).toUpperCase();
+  // Math.random().toString(36) drops trailing zeros, so IDs were not even a
+  // fixed length, and nothing checked for collisions. Two alerts sharing an ID
+  // share every per-alert Map in alertsMonitor: one user's alert would suppress
+  // the other's and their delivery failures would add toward one deactivation.
+  // `reserved` covers a batch that has been generated but not yet persisted.
+  generateAlertId(reserved = null) {
+    const existing = new Set(this.alertsDb.getAllAlerts().map(alert => alert.id));
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = crypto.randomBytes(6).toString('hex');
+      if (!existing.has(candidate) && !(reserved && reserved.has(candidate))) {
+        return candidate;
+      }
+      console.warn(`⚠️ Alert ID collision on ${candidate}, regenerating`);
+    }
+
+    throw new Error('Could not generate a unique alert ID');
+  }
+
+  // One member can otherwise create thousands of alerts, and each row rewrites
+  // the whole database file. Returns true when the request must be rejected.
+  async enforceAlertLimit(interaction, additional = 1) {
+    const existing = this.alertsDb.getUserAlerts(interaction.user.id).length;
+
+    if (existing + additional > AlertsCommand.MAX_ALERTS_PER_USER) {
+      const suffix = additional > 1
+        ? `\nThis command would create **${additional}** more.`
+        : '';
+      await this.replyInvalidInput(
+        interaction,
+        `❌ **Alert limit reached**\nYou already have **${existing}** of a maximum **${AlertsCommand.MAX_ALERTS_PER_USER}** alerts.${suffix}\nUse \`/alerts remove alert_id:ID\` (or \`alert_id:-1\` to clear all active alerts) to free up space.`
+      );
+      return true;
+    }
+
+    return false;
   }
 
   // Collection slugs are letters/numbers/dashes only - anything else could
@@ -1134,5 +1187,8 @@ class AlertsCommand {
 
 // Maximum number of token IDs accepted in a single /alerts token command
 AlertsCommand.MAX_TOKEN_IDS = 20;
+
+// Maximum number of alerts a single user may hold at once
+AlertsCommand.MAX_ALERTS_PER_USER = 25;
 
 module.exports = AlertsCommand;

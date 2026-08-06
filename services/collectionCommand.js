@@ -8,6 +8,30 @@ class CollectionCommand {
   constructor() {
     // No need to initialize NFTTracker for this command
     this.cryptoPriceService = new CryptoPriceService();
+    // Every invocation costs 2-4 OpenSea calls plus a CoinGecko call, so one
+    // member spamming the command can exhaust the shared API budget
+    this.lastInvocation = new Map(); // userId -> timestamp
+    this.COOLDOWN_MS = 10 * 1000; // 10 seconds
+  }
+
+  // Returns the milliseconds left on the caller's cooldown (0 when free to go)
+  // and prunes expired entries so the Map cannot grow without bound
+  checkCooldown(userId) {
+    const now = Date.now();
+
+    for (const [id, timestamp] of this.lastInvocation) {
+      if (now - timestamp >= this.COOLDOWN_MS) {
+        this.lastInvocation.delete(id);
+      }
+    }
+
+    const last = this.lastInvocation.get(userId);
+    if (last != null) {
+      return this.COOLDOWN_MS - (now - last);
+    }
+
+    this.lastInvocation.set(userId, now);
+    return 0;
   }
 
   getCommandData() {
@@ -55,6 +79,15 @@ class CollectionCommand {
       if (!this.isValidSlug(slug)) {
         await interaction.reply({
           content: `❌ **Invalid collection slug**: \`${slug}\`\nSlugs may only contain letters, numbers and dashes.`,
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const remainingMs = this.checkCooldown(interaction.user.id);
+      if (remainingMs > 0) {
+        await interaction.reply({
+          content: `⏳ Slow down - you can use \`/check collection\` again in ${Math.ceil(remainingMs / 1000)}s.`,
           flags: MessageFlags.Ephemeral
         });
         return;

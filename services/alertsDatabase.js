@@ -92,6 +92,33 @@ class AlertsDatabase {
     }
   }
 
+  // Bulk append. addAlert() rewrites the whole file per row, so creating N
+  // alerts in a loop costs O(n^2) bytes written - this saves once for the batch.
+  async addAlerts(alertsArray) {
+    if (!this.initialized) return false;
+    if (!Array.isArray(alertsArray) || alertsArray.length === 0) return false;
+
+    try {
+      for (const alert of alertsArray) {
+        const userId = alert.userId;
+
+        if (!this.alerts.has(userId)) {
+          this.alerts.set(userId, []);
+        }
+
+        this.alerts.get(userId).push(alert);
+      }
+
+      await this.saveToFile();
+      console.log(`✅ ${alertsArray.length} alerts added to database in one write`);
+      console.log(`📊 Database now has ${this.alerts.size} users with alerts`);
+      return true;
+    } catch (error) {
+      console.error('❌ Error adding alerts to database:', error.message);
+      return false;
+    }
+  }
+
   async removeAlert(userId, alertId) {
     if (!this.initialized) return false;
 

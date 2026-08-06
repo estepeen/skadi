@@ -1,6 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config');
 const registry = require('./registry');
 
 /**
@@ -61,7 +62,18 @@ class IgnoreCommand {
 
     console.log(`🚫 Ignore command executed - subcommand: ${subcommand}, user: ${interaction.user.username}`);
 
-    await interaction.deferReply({ ephemeral: true });
+    // setDefaultMemberPermissions is only a default - a guild admin can re-open
+    // the command to everyone in Integrations settings, so re-check at runtime
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      console.log(`⚠️ Rejected /ignore from non-administrator ${interaction.user.id}`);
+      await interaction.reply({
+        content: '❌ This command is restricted to server administrators.',
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
       switch (subcommand) {
@@ -98,10 +110,11 @@ class IgnoreCommand {
   async handleAdd(interaction) {
     const slug = interaction.options.getString('slug').toLowerCase().trim();
 
-    // Validate slug format (basic validation)
-    if (!slug || slug.includes(' ') || slug.includes('#')) {
+    // A newline used to inject extra entries into the file and other characters
+    // injected markdown into the reply - same rule alertsCommand enforces
+    if (!this.isValidSlug(slug)) {
       await interaction.editReply({
-        content: '❌ Invalid collection slug format. Use the slug from OpenSea URL.\nExample: `bored-ape-yacht-club`',
+        content: '❌ Invalid collection slug format. Slugs may only contain letters, numbers and dashes.\nExample: `bored-ape-yacht-club`',
         embeds: []
       });
       return;
@@ -152,6 +165,14 @@ class IgnoreCommand {
    */
   async handleRemove(interaction) {
     const slug = interaction.options.getString('slug').toLowerCase().trim();
+
+    if (!this.isValidSlug(slug)) {
+      await interaction.editReply({
+        content: '❌ Invalid collection slug format. Slugs may only contain letters, numbers and dashes.\nExample: `bored-ape-yacht-club`',
+        embeds: []
+      });
+      return;
+    }
 
     // Read current ignored collections
     const ignoredCollections = this.readIgnoredCollections();
@@ -285,6 +306,13 @@ class IgnoreCommand {
   }
 
   /**
+   * Collection slugs are letters/numbers/dashes only
+   */
+  isValidSlug(slug) {
+    return typeof slug === 'string' && /^[a-z0-9][a-z0-9-]{0,99}$/i.test(slug);
+  }
+
+  /**
    * Read ignored collections from file
    */
   readIgnoredCollections() {
@@ -332,20 +360,24 @@ class IgnoreCommand {
   }
 
   /**
-   * Reload config to apply changes
+   * Apply the on-disk ignore list to the already-loaded config.
+   *
+   * Deliberately does NOT drop config.js from the require cache and re-require
+   * it: config.js calls process.exit(1) at module scope when a required env var
+   * is missing, so an admin running /ignore add could terminate the bot. A
+   * re-require also produces a new object that only nftTracker picks up, leaving
+   * every other module on the stale one. Mutating the existing array in place
+   * updates every holder of the reference and re-runs no module-scope code.
    */
   reloadConfig() {
     try {
-      // Clear require cache for config
-      const configPath = path.join(__dirname, '..', 'config.js');
-      delete require.cache[require.resolve(configPath)];
-      
-      // Reload config
-      const config = require('../config');
-      
+      const fresh = this.readIgnoredCollections();
+      config.ignoredCollections.length = 0;
+      config.ignoredCollections.push(...fresh);
+
       console.log('🔄 Config reloaded with updated ignore list');
       console.log('📋 Current ignored collections:', config.ignoredCollections);
-      
+
       // Also reload NFTTracker config
       try {
         const nftTracker = registry.getNFTTracker();
