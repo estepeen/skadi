@@ -62,3 +62,8 @@ jspm_packages/
 .Trashes
 ehthumbs.db
 Thumbs.db 
+# Runtime state — never commit; a git pull on the VPS must not clobber live data
+wallets.csv
+data/alerts.json
+data/purchases.json
+ignored-collections.txt

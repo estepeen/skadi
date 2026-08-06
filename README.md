@@ -57,12 +57,20 @@ DISCORD_NFTS_ROLE_ID=your_nfts_role_id_here
 SCAN_INTERVAL=30000
 ```
 
-3. Edit the `wallets.csv` file with the wallets to track:
+3. Create `wallets.csv` from the template and fill in the wallets to track:
+```bash
+cp wallets.example.csv wallets.csv
+```
 ```csv
 address,name
 0xabcdef0123456789abcdef0123456789abcdef01,Wallet1
 0x1234567890abcdef1234567890abcdef12345678,Wallet2
 ```
+
+`wallets.csv`, `data/alerts.json` and `ignored-collections.txt` are runtime
+state and are deliberately not tracked by git — a `git pull` on the server
+must never overwrite your live watchlist or alerts. Templates for all three
+are committed as `*.example.*` files.
 
 ## Usage
 
