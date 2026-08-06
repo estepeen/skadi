@@ -58,6 +58,12 @@ module.exports = {
     apiKey: process.env.OPENSEA_API_KEY
   },
   scanInterval: process.env.SCAN_INTERVAL ? parseInt(process.env.SCAN_INTERVAL) : 60000,
+
+  // Gap between per-wallet requests inside one sweep. The free OpenSea tier is
+  // 600 requests/hour, but it is enforced as a short window - so N wallets fired
+  // back to back trip a 429 even when the hourly average is well under budget.
+  // Keep this at roughly 60 / (requests-per-minute you are allowed).
+  walletScanDelay: process.env.WALLET_SCAN_DELAY ? parseInt(process.env.WALLET_SCAN_DELAY) : 7000,
   csvFile: "wallets.csv",
   
   // 🚫 Load ignored collections from external file

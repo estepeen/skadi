@@ -133,8 +133,9 @@ class NFTTracker {
           console.log(`\n🔍 Checking ${walletInfo.name} activity on OpenSea...`);
           await this.checkWalletActivity(address, walletInfo);
           
-          // Add delay between wallets to avoid rate limiting
-          await this.sleep(2000); // 2 seconds between wallets
+          // Spread the sweep out. Firing every wallet back to back trips the
+          // free tier's short-window limit even when the hourly total is fine.
+          await this.sleep(this.config.walletScanDelay);
         }
         
         // Wait before next scan
