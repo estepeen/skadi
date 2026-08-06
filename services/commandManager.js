@@ -1,4 +1,4 @@
-const { Collection } = require('discord.js');
+const { Collection, MessageFlags } = require('discord.js');
 const CollectionCommand = require('./collectionCommand');
 const AlertsCommand = require('./alertsCommand');
 const IgnoreCommand = require('./ignoreCommand');
@@ -70,11 +70,18 @@ class CommandManager {
       console.error(`❌ Error executing command ${commandName}:`, error);
       
       const errorMessage = '❌ An unexpected error occurred while running the command.';
-      
-      if (interaction.deferred) {
-        await interaction.editReply({ content: errorMessage });
-      } else {
-        await interaction.reply({ content: errorMessage, ephemeral: true });
+
+      // Some commands defer publicly, so editReply would post the error for
+      // everyone. Drop the placeholder and follow up privately instead.
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.deleteReply().catch(() => {});
+          await interaction.followUp({ content: errorMessage, flags: MessageFlags.Ephemeral });
+        } else {
+          await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
+        }
+      } catch (replyError) {
+        console.error('❌ Could not send error message:', replyError?.message ?? replyError);
       }
     }
   }

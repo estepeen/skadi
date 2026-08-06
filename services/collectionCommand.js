@@ -48,11 +48,20 @@ class CollectionCommand {
         return;
       }
 
-      // Acknowledge within Discord's 3s window - the fetches below take longer
-      await interaction.deferReply();
-
       const slug = interaction.options.getString('slug', true);
       const chain = interaction.options.getString('chain') || 'ethereum';
+
+      // Validate before anything reaches an OpenSea URL
+      if (!this.isValidSlug(slug)) {
+        await interaction.reply({
+          content: `❌ **Invalid collection slug**: \`${slug}\`\nSlugs may only contain letters, numbers and dashes.`,
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      // Acknowledge within Discord's 3s window - the fetches below take longer
+      await interaction.deferReply();
 
       console.log(`🔍 Collection command executed for: ${slug} on ${chain}`);
       console.log(`🔍 Fetching collection from: https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}`);
@@ -294,12 +303,14 @@ class CollectionCommand {
 
     } catch (error) {
       console.error('❌ Error in collection command:', error);
+      // A throw without .message must not turn this handler into a new TypeError
+      const msg = String(error?.message ?? error);
       let errorMessage = '❌ An error occurred while loading collection information.';
-      if (error.message.includes('rate limit') || error.message.includes('429')) {
+      if (msg.includes('rate limit') || msg.includes('429')) {
         errorMessage = '⚠️ OpenSea API rate limit reached. Please try again later.';
-      } else if (error.message.includes('404') || error.message.includes('not found')) {
+      } else if (msg.includes('404') || msg.includes('not found')) {
         errorMessage = '❌ Collection not found. Please check the collection name.';
-      } else if (error.message.includes('401') || error.message.includes('unauthorized')) {
+      } else if (msg.includes('401') || msg.includes('unauthorized')) {
         errorMessage = '❌ OpenSea API authentication error. Please check your API key.';
       }
       
@@ -316,6 +327,10 @@ class CollectionCommand {
         console.error('❌ Could not send error message:', replyError.message);
       }
     }
+  }
+
+  isValidSlug(slug) {
+    return typeof slug === 'string' && /^[a-z0-9][a-z0-9-]{0,99}$/i.test(slug);
   }
 
   async disconnect() {

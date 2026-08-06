@@ -13,8 +13,13 @@ class AlertsMonitor {
     this.FLOOR_PRICE_CACHE_DURATION = 60 * 1000; // 1 minute
     this.floorPriceInterval = null;
     this.tokenListingInterval = null;
-    this.stopped = false;
-    this.lastListingIdentity = new Map(); // alertId -> identity of last seen cheapest listing
+    // Each loop owns its stop flag and generation counter so restarting one
+    // loop cannot revive or duplicate the other
+    this.floorPriceStopped = false;
+    this.tokenListingStopped = false;
+    this.floorPriceGeneration = 0;
+    this.tokenListingGeneration = 0;
+    this.seenListingIdentities = new Map(); // alertId -> Set of order hashes already reported
   }
 
   async initialize() {
@@ -41,7 +46,10 @@ class AlertsMonitor {
 
   startFloorPriceMonitoring() {
     if (this.floorPriceInterval) clearTimeout(this.floorPriceInterval);
-    this.stopped = false;
+    this.floorPriceStopped = false;
+    // A pass belonging to an older generation must not reschedule itself,
+    // otherwise a restart during an in-flight pass leaves two loops running
+    const generation = ++this.floorPriceGeneration;
 
     // Self-rescheduling loop: a pass must finish before the next one is queued,
     // otherwise slow passes overlap and compound the OpenSea request rate
@@ -52,10 +60,13 @@ class AlertsMonitor {
       try {
         await this.checkAllCollectionAlerts();
       } catch (error) {
-        console.error('❌ Floor price monitoring pass failed:', error.message);
+        // A non-Error throw must not break the reschedule below
+        console.error('❌ Floor price monitoring pass failed:', error?.message ?? error);
+      } finally {
+        if (!this.floorPriceStopped && generation === this.floorPriceGeneration) {
+          this.floorPriceInterval = setTimeout(runPass, 60 * 1000);
+        }
       }
-      if (this.stopped) return;
-      this.floorPriceInterval = setTimeout(runPass, 60 * 1000);
     };
 
     this.floorPriceInterval = setTimeout(runPass, 60 * 1000);
@@ -64,16 +75,19 @@ class AlertsMonitor {
 
   startTokenListingMonitoring() {
     if (this.tokenListingInterval) clearTimeout(this.tokenListingInterval);
-    this.stopped = false;
+    this.tokenListingStopped = false;
+    const generation = ++this.tokenListingGeneration;
 
     const runPass = async () => {
       try {
         await this.checkAllTokenListingAlerts();
       } catch (error) {
-        console.error('❌ Token listing monitoring pass failed:', error.message);
+        console.error('❌ Token listing monitoring pass failed:', error?.message ?? error);
+      } finally {
+        if (!this.tokenListingStopped && generation === this.tokenListingGeneration) {
+          this.tokenListingInterval = setTimeout(runPass, 60 * 1000);
+        }
       }
-      if (this.stopped) return;
-      this.tokenListingInterval = setTimeout(runPass, 60 * 1000);
     };
 
     this.tokenListingInterval = setTimeout(runPass, 60 * 1000);
@@ -81,7 +95,8 @@ class AlertsMonitor {
   }
 
   stop() {
-    this.stopped = true;
+    this.floorPriceStopped = true;
+    this.tokenListingStopped = true;
     if (this.floorPriceInterval) {
       clearTimeout(this.floorPriceInterval);
       this.floorPriceInterval = null;
@@ -167,8 +182,15 @@ class AlertsMonitor {
 
     if (triggered) {
       console.log(`🚨 SENDING ALERT for ${collectionName} - floor ${currentFloorPrice} ETH vs alert ${alertPrice} ETH`);
-      await this.sendCollectionAlert(alert, currentFloorPrice);
-      
+      const sent = await this.sendCollectionAlert(alert, currentFloorPrice);
+
+      // A failed delivery must not consume the alert - leave it active so the
+      // next pass retries instead of silently swallowing it
+      if (!sent) {
+        console.warn(`⚠️ Collection alert ${alertId} was not delivered, keeping it active for the next pass`);
+        return;
+      }
+
       // Deactivate the alert after triggering
       if (alert.mode !== 'repeat') {
         console.log(`🔄 Deactivating alert ${alertId} (mode: ${alert.mode})`);
@@ -179,14 +201,29 @@ class AlertsMonitor {
     }
   }
 
+  // channels.cache is only populated lazily, so an alert in an uncached channel
+  // could never fire. Fall back to an API fetch; null means genuinely not found.
+  async resolveAlertChannel(channelId) {
+    const client = this.discordNotifier.getClient();
+    const cached = client.channels.cache.get(channelId);
+    if (cached) return cached;
+
+    try {
+      return await client.channels.fetch(channelId);
+    } catch (error) {
+      console.error(`❌ Could not fetch alert channel ${channelId}:`, error?.message ?? error);
+      return null;
+    }
+  }
+
+  // Returns true only when the message actually reached Discord
   async sendCollectionAlert(alert, currentFloorPrice) {
     try {
-      const client = this.discordNotifier.getClient();
-      const channel = client.channels.cache.get(alert.channelId);
-      
+      const channel = await this.resolveAlertChannel(alert.channelId);
+
       if (!channel) {
         console.error(`❌ Alert channel not found: ${alert.channelId}`);
-        return;
+        return false;
       }
 
       const embed = {
@@ -230,8 +267,10 @@ class AlertsMonitor {
 
       await channel.send({ content: `<@${alert.userId}> 🚨 **Collection Alert Triggered!**`, embeds: [embed] });
       console.log(`✅ Collection alert sent to user ${alert.username}`);
+      return true;
     } catch (error) {
-      console.error('❌ Error sending collection alert:', error.message);
+      console.error('❌ Error sending collection alert:', error?.message ?? error);
+      return false;
     }
   }
 
@@ -296,6 +335,16 @@ class AlertsMonitor {
 
     try {
       const allAlerts = this.alertsDb.getActiveAlerts();
+
+      // Drop dedupe state for alerts that are gone (removed or deactivated),
+      // otherwise the map grows for the lifetime of the process
+      const activeAlertIds = new Set(allAlerts.map(a => a.id));
+      for (const alertId of this.seenListingIdentities.keys()) {
+        if (!activeAlertIds.has(alertId)) {
+          this.seenListingIdentities.delete(alertId);
+        }
+      }
+
       const tokenAlerts = allAlerts.filter(a => a.type === 'token' && ['any_listing', 'listed_below', 'listed_above'].includes(a.condition));
 
       if (tokenAlerts.length === 0) return;
@@ -321,7 +370,7 @@ class AlertsMonitor {
         } else {
           console.log(`💰 Found listing for ${contract}/${tokenId} on ${chain}: ${lowest.price} ETH`);
           for (const alert of alerts) {
-            await this.evaluateTokenListingAlert(alert, lowest.price, lowest.identity);
+            await this.evaluateTokenListingAlert(alert, lowest.price, lowest.identities);
           }
         }
         // Avoid rate limits
@@ -332,9 +381,12 @@ class AlertsMonitor {
     }
   }
 
-  // Returns { price, identity } for the cheapest active listing, or null.
-  // identity is a stable handle for that listing so repeat alerts can tell a
-  // brand new listing apart from the same one seen on the previous pass.
+  // Returns { price, identities } for the active listings of a token, or null.
+  // price is the cheapest listing (listed_below / listed_above compare against it).
+  // identities is the Set of order hashes of ALL listings, so a new non-floor
+  // listing is still recognised as new. It is null when at least one listing has
+  // no usable hash - dedupe is then skipped for that pass, because deduping on
+  // price would wrongly suppress a genuinely new listing at the same price.
   async fetchTokenLowestListingPrice(chain, contract, tokenId) {
     try {
       const url = `https://api.opensea.io/api/v2/chain/${encodeURIComponent(chain)}/contract/${encodeURIComponent(contract)}/nfts/${encodeURIComponent(tokenId)}/listings?limit=10`;
@@ -358,39 +410,50 @@ class AlertsMonitor {
         if (l?.protocol_data?.parameters?.startAmount) return Number(l.protocol_data.parameters.startAmount);
         return NaN;
       };
-      // Prefer an order hash so the same listing is recognised across passes
-      const extractIdentity = (l, price) => {
-        return l?.order_hash || l?.protocol_data?.parameters?.orderHash || l?.hash || `${price}`;
-      };
+      // Prefer an order hash so the same listing is recognised across passes.
+      // No hash means no reliable identity - never fall back to the price.
+      const extractIdentity = (l) => l?.order_hash || l?.hash || null;
 
       let min = Infinity;
-      let minListing = null;
+      const identities = new Set();
+      let identitiesUsable = true;
       for (const l of listings) {
         const p = extractPrice(l);
         if (typeof p === 'number' && isFinite(p) && p > 0) {
           if (p < min) {
             min = p;
-            minListing = l;
+          }
+          const identity = extractIdentity(l);
+          if (identity) {
+            identities.add(identity);
+          } else {
+            identitiesUsable = false;
           }
         }
       }
       if (!isFinite(min)) return null;
-      return { price: min, identity: extractIdentity(minListing, min) };
+      return { price: min, identities: identitiesUsable ? identities : null };
     } catch (e) {
       console.error('❌ Error fetching token listings:', e.message);
       return null;
     }
   }
 
-  async evaluateTokenListingAlert(alert, lowestPrice, listingIdentity = null) {
+  async evaluateTokenListingAlert(alert, lowestPrice, listingIdentities = null) {
     const { condition, price: alertPrice, userId, id: alertId, nftName, tokenId } = alert;
 
     console.log(`🔍 Checking token alert ${alertId}: ${nftName} (${tokenId}) - condition: ${condition}, alertPrice: ${alertPrice}, lowestListing: ${lowestPrice}`);
 
-    // Only fire on a listing we have not already reported for this alert
-    if (listingIdentity != null && this.lastListingIdentity.get(alertId) === listingIdentity) {
-      console.log(`⏭️ Token alert ${alertId} skipped: listing unchanged since last check`);
-      return;
+    // Only fire when at least one listing has not been reported for this alert
+    // yet. listingIdentities === null means the hashes were unusable this pass,
+    // in which case dedupe is skipped rather than guessed.
+    if (listingIdentities) {
+      const seen = this.seenListingIdentities.get(alertId);
+      const hasNewListing = [...listingIdentities].some(identity => !seen || !seen.has(identity));
+      if (!hasNewListing) {
+        console.log(`⏭️ Token alert ${alertId} skipped: no new listing since last check`);
+        return;
+      }
     }
 
     let triggered = false;
@@ -428,17 +491,25 @@ class AlertsMonitor {
       transactionHash: null,
       timestamp: new Date().toISOString()
     };
-    await this.sendTokenAlert(alert, txData, alertType);
+    const sent = await this.sendTokenAlert(alert, txData, alertType);
 
-    if (listingIdentity != null) {
-      this.lastListingIdentity.set(alertId, listingIdentity);
+    // A failed delivery must not consume the alert or the dedupe slot
+    if (!sent) {
+      console.warn(`⚠️ Token alert ${alertId} was not delivered, keeping it active for the next pass`);
+      return;
+    }
+
+    // Replace rather than merge: hashes that disappeared are dropped, so a
+    // delisted-then-relisted item fires again and the set cannot grow unbounded
+    if (listingIdentities) {
+      this.seenListingIdentities.set(alertId, new Set(listingIdentities));
     }
 
     // Honor the alert's own mode: only 'repeat' stays active after triggering
     if (alert.mode !== 'repeat') {
       console.log(`🔄 Deactivating token alert ${alertId} (mode: ${alert.mode})`);
       await this.alertsDb.updateAlert(userId, alertId, { active: false, triggeredAt: new Date().toISOString() });
-      this.lastListingIdentity.delete(alertId);
+      this.seenListingIdentities.delete(alertId);
     }
   }
 
@@ -492,20 +563,20 @@ class AlertsMonitor {
       await this.sendTokenAlert(alert, transactionData, alertType);
       
       // Deactivate according to mode (repeat keeps active)
-      if (alert.mode !== 'repeat' && condition !== 'any_listing') {
+      if (alert.mode !== 'repeat') {
         await this.alertsDb.updateAlert(userId, alertId, { active: false, triggeredAt: new Date().toISOString() });
       }
     }
   }
 
+  // Returns true only when the message actually reached Discord
   async sendTokenAlert(alert, transactionData, alertType) {
     try {
-      const client = this.discordNotifier.getClient();
-      const channel = client.channels.cache.get(alert.channelId);
-      
+      const channel = await this.resolveAlertChannel(alert.channelId);
+
       if (!channel) {
         console.error(`❌ Alert channel not found: ${alert.channelId}`);
-        return;
+        return false;
       }
 
       const embed = {
@@ -556,8 +627,10 @@ class AlertsMonitor {
 
       await channel.send({ content: `<@${alert.userId}> 🚨 **Token Alert Triggered!**`, embeds: [embed] });
       console.log(`✅ Token alert sent to user ${alert.username}`);
+      return true;
     } catch (error) {
-      console.error('❌ Error sending token alert:', error.message);
+      console.error('❌ Error sending token alert:', error?.message ?? error);
+      return false;
     }
   }
 

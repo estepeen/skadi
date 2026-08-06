@@ -241,10 +241,12 @@ class AlertsCommand {
 
     console.log(`🔔 Alerts command executed - subcommand: ${subcommand}, user: ${userId}`);
 
-    // Immediate reply to prevent timeout (send as ephemeral so only the user sees it)
-    await interaction.reply({ content: '⏳ Processing your alert request...', ephemeral: true });
-
     try {
+      // Immediate reply to prevent timeout (send as ephemeral so only the user sees it).
+      // Inside the try: a 10062 here must not reject execute() and leave
+      // commandManager acknowledging the interaction a second time.
+      await interaction.reply({ content: '⏳ Processing your alert request...', ephemeral: true });
+
       switch (subcommand) {
         case 'collection':
           await this.handleCollectionAlert(interaction);
@@ -276,14 +278,14 @@ class AlertsCommand {
       console.error('❌ Error in alerts command:', error);
       
       try {
-        const errorMessage = `❌ Alert command failed: ${error.message}`;
-        if (interaction.replied) {
+        const errorMessage = `❌ Alert command failed: ${error?.message ?? error}`;
+        if (interaction.deferred || interaction.replied) {
           await interaction.editReply({ content: errorMessage });
         } else {
           await interaction.reply({ content: errorMessage, ephemeral: true });
         }
       } catch (replyError) {
-        console.error('❌ Could not send error response:', replyError.message);
+        console.error('❌ Could not send error response:', replyError?.message ?? replyError);
       }
     }
   }

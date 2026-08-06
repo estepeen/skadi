@@ -588,7 +588,7 @@ class NFTTracker {
       console.log(`🔍 Fetching collection info by slug: ${slug} on ${chainName}...`);
       
       // Fetch collection info using slug
-      const collectionResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}`, {
+      const collectionResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}`, {
         headers: {
           'X-API-KEY': apiKey,
           'Accept': 'application/json'
@@ -608,7 +608,7 @@ class NFTTracker {
         
         // Fetch collection stats using the same slug
         console.log(`🔍 Fetching stats for slug: ${slug}`);
-        const statsResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}/stats?chain=${chain}`, {
+        const statsResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
           headers: {
             'X-API-KEY': apiKey,
             'Accept': 'application/json'
@@ -703,7 +703,7 @@ class NFTTracker {
       const chain = chainMap[chainName] || 'ethereum';
       
       // Try to get royalties from collection details endpoint
-      const royaltiesResponse = await fetch(`https://api.opensea.io/api/v2/collections/${slug}?chain=${chain}&include_hidden=true`, {
+      const royaltiesResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}&include_hidden=true`, {
         headers: {
           'X-API-KEY': apiKey,
           'Accept': 'application/json'
@@ -990,7 +990,7 @@ class NFTTracker {
       console.log(`🔍 Fetching collection stats by slug: ${slug} on ${chainName} via OpenSea API V2...`);
       
       // Use OpenSea API V2 to get collection stats directly by slug
-      const response = await fetch(`https://api.opensea.io/api/v2/collections/${slug}/stats?chain=${chain}`, {
+      const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
         headers: {
           'X-API-KEY': apiKey,
           'Accept': 'application/json'
