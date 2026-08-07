@@ -1402,10 +1402,13 @@ class NFTTracker {
       const chainName = this.getChainFromOpenSeaChain(event.chain);
       console.log(`   Chain: ${chainName}`);
 
-      // Initialize price variables
+      // Initialize price variables. Default to the chain's own native token,
+      // not ETH - every EVM chain is not Ethereum, and Polygon, BSC, ApeChain,
+      // Berachain and Avalanche all settle in something else. A payment object
+      // on the event still overrides this with the actual symbol below.
       let price = 0;
       let priceUSD = 0;
-      let nativeSymbol = 'ETH';
+      let nativeSymbol = this.getNativeTokenSymbol(chainName);
 
       // If we have an order hash, try to fetch detailed info
       if (event.order_hash) {
@@ -1425,7 +1428,7 @@ class NFTTracker {
         // Calculate USD price using native token price
         const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
         priceUSD = price * nativePriceUSD;
-        nativeSymbol = payment.symbol || 'ETH';
+        nativeSymbol = payment.symbol || this.getNativeTokenSymbol(chainName);
         console.log(`   Payment Price: ${price} ${nativeSymbol}, USD: $${priceUSD}`);
       }
 
@@ -2110,11 +2113,14 @@ class NFTTracker {
     const quantity = Number(reportedQty) || (Array.isArray(event?.nfts) ? event.nfts.length : 0) || 0;
 
     // Try to compute total price
+    // Default to the chain's native token, not ETH. handleBulkMintEvent
+    // already did this; the sale and purchase handlers did not, so a paid
+    // sweep on Polygon or ApeChain was labelled in ETH.
     let totalPrice = 0;
-    let nativeSymbol = 'ETH';
+    let nativeSymbol = this.getNativeTokenSymbol(chainName);
     if (event?.payment && event.payment.quantity) {
       totalPrice = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
-      nativeSymbol = event.payment.symbol || 'ETH';
+      nativeSymbol = event.payment.symbol || nativeSymbol;
     }
 
     // Collection context (use the first NFT as representative)
@@ -2497,11 +2503,14 @@ class NFTTracker {
     const quantity = Number(reportedQty) || (Array.isArray(event?.nfts) ? event.nfts.length : 0) || 0;
 
     // Try to compute total price
+    // Default to the chain's native token, not ETH. handleBulkMintEvent
+    // already did this; the sale and purchase handlers did not, so a paid
+    // sweep on Polygon or ApeChain was labelled in ETH.
     let totalPrice = 0;
-    let nativeSymbol = 'ETH';
+    let nativeSymbol = this.getNativeTokenSymbol(chainName);
     if (event?.payment && event.payment.quantity) {
       totalPrice = parseFloat(event.payment.quantity) / Math.pow(10, event.payment.decimals || 18);
-      nativeSymbol = event.payment.symbol || 'ETH';
+      nativeSymbol = event.payment.symbol || nativeSymbol;
     }
 
     // Collection context (use the first NFT as representative)
