@@ -1534,12 +1534,17 @@ class NFTTracker {
           console.log(`   🔍 Searching OpenSea API for purchase data...`);
           purchaseData = await this.recoverPurchaseData(nft.contract, nft.identifier, walletInfo.address, chainName, transactionData.timestamp.getTime());
           
-          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
-            console.log(`   ✅ Found purchase data via API: ${purchaseData.price} ETH`);
-            
+          // >= 0, not > 0: a free mint is a genuine cost basis of zero and must
+          // still yield a PnL. Only a missing basis (null) is unknown.
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price >= 0) {
+            console.log(`   ✅ Found purchase data via API: ${purchaseData.price} ${nativeSymbol}`);
+
             // Calculate PnL and hold time from recovered data
             const pnl = price - purchaseData.price;
-            const pnlPercent = ((pnl / purchaseData.price) * 100).toFixed(2);
+            // Undefined against a zero basis - the embed omits the line
+            const pnlPercent = purchaseData.price > 0
+              ? ((pnl / purchaseData.price) * 100).toFixed(2)
+              : null;
             const pnlUSD = (priceUSD || 0) - (purchaseData.priceUSD || 0);
             
             // Calculate hold time
@@ -2173,14 +2178,14 @@ class NFTTracker {
           console.log(`   🔍 Searching OpenSea API for purchase data for ${item.name || `#${item.identifier}`}...`);
           const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName, this.eventTimestampMs(event));
           
-          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price >= 0) {
             console.log(`   ✅ Found purchase data via API for ${item.name || `#${item.identifier}`}: ${purchaseData.price} ETH`);
           } else {
             console.log(`   ❌ No purchase data found for ${item.name || `#${item.identifier}`}`);
           }
             
           // Calculate PnL if we have purchase data
-          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price >= 0) {
             const itemPnL = unitPrice - purchaseData.price;
             const itemPnLUSD = unitPriceUSD - (purchaseData.priceUSD || 0);
             
@@ -2563,14 +2568,14 @@ class NFTTracker {
           console.log(`   🔍 Searching OpenSea API for purchase data for ${item.name || `#${item.identifier}`}...`);
           const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName, this.eventTimestampMs(event));
           
-          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price >= 0) {
             console.log(`   ✅ Found purchase data via API for ${item.name || `#${item.identifier}`}: ${purchaseData.price} ETH`);
           } else {
             console.log(`   ❌ No purchase data found for ${item.name || `#${item.identifier}`}`);
           }
             
           // Calculate PnL if we have purchase data
-          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
+          if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price >= 0) {
             const itemPnL = unitPrice - purchaseData.price;
             const itemPnLUSD = unitPriceUSD - (purchaseData.priceUSD || 0);
             

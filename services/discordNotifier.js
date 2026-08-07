@@ -490,18 +490,14 @@ class DiscordNotifier {
 
     // Sales: show Buy Price, Sell Price and PnL
     if (type === 'sale') {
-      // Buy Price (from stored purchase data)
+      // Buy Price (from stored purchase data). 0 means the wallet minted it
+      // for free - a known basis, shown as "Free"; only an absent basis is "-".
       let buyPriceDisplay = '-';
-      if (isBulk && buyPrice && buyPrice > 0) {
-        // For bulk sales, use pre-calculated buy price
+      if (Number.isFinite(buyPrice) && buyPrice > 0) {
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
-        const formattedPrice = this.formatPrice(buyPrice);
-        buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
-      } else if (buyPrice && buyPrice > 0) {
-        // For single sales, use buy price from purchase data
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
-        const formattedPrice = this.formatPrice(buyPrice);
-        buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
+        buyPriceDisplay = `${this.formatPrice(buyPrice)} ${displaySymbol}`;
+      } else if (buyPrice === 0) {
+        buyPriceDisplay = 'Free';
       }
       embed.addFields({ name: '💰 Buy Price', value: buyPriceDisplay, inline: true });
 
@@ -524,13 +520,16 @@ class DiscordNotifier {
       let pnlValue = '-';
       let pnlEmoji = '🫥';
       
-      if (pnl !== undefined && pnlUSD !== undefined && buyPrice > 0) {
+      // buyPrice of 0 is a real cost basis - a free mint - not missing data,
+      // so it must produce a PnL. Only the percentage is undefined against a
+      // zero basis, and that line is dropped rather than shown as infinity.
+      if (pnl !== undefined && pnlUSD !== undefined && Number.isFinite(buyPrice) && buyPrice >= 0) {
         // Use pre-calculated PnL data (both bulk and single sales)
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
         const sign = pnl > 0 ? '+' : pnl < 0 ? '-' : '';
         const absPnl = Math.abs(pnl);
         const absUsd = Math.abs(pnlUSD);
-        const percentage = (pnl / buyPrice) * 100;
+        const percentage = buyPrice > 0 ? (pnl / buyPrice) * 100 : null;
 
         // ETH line: threshold < 0.0001, otherwise 4 decimals (<1) or 2 decimals (>=1)
         let ethContent;
@@ -550,15 +549,14 @@ class DiscordNotifier {
           usdContent = `$${Math.round(absUsd * 100) / 100}`;
         }
 
-        // Percentage line: threshold < 1%
-        let percContent;
-        if (isNaN(percentage) || !isFinite(percentage) || Math.abs(percentage) < 1) {
-          percContent = '<1%';
-        } else {
-          percContent = `${Math.abs(percentage).toFixed(1)}%`;
+        // Percentage line: omitted entirely against a zero cost basis, where
+        // any gain is mathematically infinite and the number says nothing
+        const lines = [`${sign}${ethContent}`, `${sign}${usdContent}`];
+        if (percentage !== null && !isNaN(percentage) && isFinite(percentage)) {
+          lines.push(Math.abs(percentage) < 1 ? `${sign}<1%` : `${sign}${Math.abs(percentage).toFixed(1)}%`);
         }
 
-        pnlValue = `${sign}${ethContent}\n${sign}${usdContent}\n${sign}${percContent}`;
+        pnlValue = lines.join('\n');
         pnlEmoji = pnl > 0 ? '🤑' : (pnl < 0 ? '😢' : '🫥');
       } else if (buyPrice && price && buyPrice > 0 && price > 0) {
         // Fallback: calculate PnL from prices if no pre-calculated data
