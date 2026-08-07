@@ -19,6 +19,9 @@ const { toOpenSeaChain, toDisplayName, getNativeSymbol } = require('../utils/cha
 // mint test goes through this one predicate.
 const { isMintEvent } = require('../utils/events');
 
+// Hold time formatting lives in one place, shared with the embed builder.
+const { formatHoldTime } = require('../utils/format');
+
 class NFTTracker {
   constructor() {
     this.config = config;
@@ -1552,28 +1555,15 @@ class NFTTracker {
             const buyTimestamp = purchaseData.timestamp;
             const holdTimeMs = saleTimestamp - buyTimestamp;
             
+            // A buy and sale in the same second is a real flip, shown as 0min;
+            // only a sale before the buy is 'Unknown'.
             let holdTime;
             if (holdTimeMs < 0) {
               holdTime = 'Unknown';
+            } else if (holdTimeMs === 0) {
+              holdTime = '0min';
             } else {
-              const holdTimeMinutes = Math.floor(holdTimeMs / (1000 * 60));
-              const holdTimeHours = Math.floor(holdTimeMs / (1000 * 60 * 60));
-              const holdTimeDays = Math.floor(holdTimeMs / (1000 * 60 * 60 * 24));
-              
-              if (holdTimeMinutes < 60) {
-                holdTime = `${holdTimeMinutes}min`;
-              } else if (holdTimeHours < 24) {
-                const hours = Math.floor(holdTimeHours);
-                const minutes = Math.floor(holdTimeMinutes % 60);
-                holdTime = `${hours}h ${minutes}min`;
-              } else {
-                const days = Math.floor(holdTimeDays);
-                if (days === 1) {
-                  holdTime = `${days} day`;
-                } else {
-                  holdTime = `${days} days`;
-                }
-              }
+              holdTime = formatHoldTime(holdTimeMs);
             }
             
             // Store PnL data in transactionData for Discord
@@ -2224,28 +2214,8 @@ class NFTTracker {
     const avgBuyPriceUSD = itemsWithPnL > 0 ? totalBuyPriceUSD / itemsWithPnL : 0;
     const avgHoldTime = itemsWithPnL > 0 ? totalHoldTime / itemsWithPnL : 0;
 
-    // Format hold time
-    let holdTimeDisplay = '-';
-    if (avgHoldTime > 0) {
-      const holdTimeMinutes = Math.floor(avgHoldTime / (1000 * 60));
-      const holdTimeHours = Math.floor(avgHoldTime / (1000 * 60 * 60));
-      const holdTimeDays = Math.floor(avgHoldTime / (1000 * 60 * 60 * 24));
-      
-      if (holdTimeMinutes < 60) {
-        holdTimeDisplay = `${holdTimeMinutes}min`;
-      } else if (holdTimeHours < 24) {
-        const hours = Math.floor(holdTimeHours);
-        const minutes = Math.floor(holdTimeMinutes % 60);
-        holdTimeDisplay = `${hours}h ${minutes}min`;
-      } else {
-        const days = Math.floor(holdTimeDays);
-        if (days === 1) {
-          holdTimeDisplay = `${days} day`;
-        } else {
-          holdTimeDisplay = `${days} days`;
-        }
-      }
-    }
+    // Format hold time - no items with a known purchase date reads as '-'
+    const holdTimeDisplay = formatHoldTime(avgHoldTime);
 
     const transactionData = {
       type: 'sale',
@@ -2614,28 +2584,8 @@ class NFTTracker {
     const avgBuyPriceUSD = itemsWithPnL > 0 ? totalBuyPriceUSD / itemsWithPnL : 0;
     const avgHoldTime = itemsWithPnL > 0 ? totalHoldTime / itemsWithPnL : 0;
 
-    // Format hold time
-    let holdTimeDisplay = '-';
-    if (avgHoldTime > 0) {
-      const holdTimeMinutes = Math.floor(avgHoldTime / (1000 * 60));
-      const holdTimeHours = Math.floor(avgHoldTime / (1000 * 60 * 60));
-      const holdTimeDays = Math.floor(avgHoldTime / (1000 * 60 * 60 * 24));
-      
-      if (holdTimeMinutes < 60) {
-        holdTimeDisplay = `${holdTimeMinutes}min`;
-      } else if (holdTimeHours < 24) {
-        const hours = Math.floor(holdTimeHours);
-        const minutes = Math.floor(holdTimeMinutes % 60);
-        holdTimeDisplay = `${hours}h ${minutes}min`;
-      } else {
-        const days = Math.floor(holdTimeDays);
-        if (days === 1) {
-          holdTimeDisplay = `${days} day`;
-        } else {
-          holdTimeDisplay = `${days} days`;
-        }
-      }
-    }
+    // Format hold time - no items with a known purchase date reads as '-'
+    const holdTimeDisplay = formatHoldTime(avgHoldTime);
 
     const transactionData = {
       type: 'purchase',

@@ -13,6 +13,10 @@ const AlertsDatabase = require('./alertsDatabase');
 // no block explorer link at all, instead of a wrong etherscan one.
 const { toOpenSeaChain, getExplorerUrl } = require('../utils/chains');
 
+// Shared PnL / hold time formatting, so the two PnL branches below and the
+// hold time copies in nftTracker cannot drift apart again.
+const { formatPnl, formatHoldTime } = require('../utils/format');
+
 class DiscordNotifier {
   constructor() {
     this.client = new Client({
@@ -526,77 +530,22 @@ class DiscordNotifier {
       if (pnl !== undefined && pnlUSD !== undefined && Number.isFinite(buyPrice) && buyPrice >= 0) {
         // Use pre-calculated PnL data (both bulk and single sales)
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
-        const sign = pnl > 0 ? '+' : pnl < 0 ? '-' : '';
-        const absPnl = Math.abs(pnl);
-        const absUsd = Math.abs(pnlUSD);
-        const percentage = buyPrice > 0 ? (pnl / buyPrice) * 100 : null;
-
-        // ETH line: threshold < 0.0001, otherwise 4 decimals (<1) or 2 decimals (>=1)
-        let ethContent;
-        if (absPnl < 0.0001) {
-          ethContent = `<0.0001 ${displaySymbol}`;
-        } else if (absPnl >= 1) {
-          ethContent = `${Math.round(absPnl * 100) / 100} ${displaySymbol}`;
-        } else {
-          ethContent = `${absPnl.toFixed(4)} ${displaySymbol}`;
-        }
-
-        // USD line: threshold < $1
-        let usdContent;
-        if (isNaN(absUsd) || !isFinite(absUsd) || absUsd < 1) {
-          usdContent = '<$1';
-        } else {
-          usdContent = `$${Math.round(absUsd * 100) / 100}`;
-        }
-
-        // Percentage line: omitted entirely against a zero cost basis, where
-        // any gain is mathematically infinite and the number says nothing
-        const lines = [`${sign}${ethContent}`, `${sign}${usdContent}`];
-        if (percentage !== null && !isNaN(percentage) && isFinite(percentage)) {
-          lines.push(Math.abs(percentage) < 1 ? `${sign}<1%` : `${sign}${Math.abs(percentage).toFixed(1)}%`);
-        }
-
-        pnlValue = lines.join('\n');
-        pnlEmoji = pnl > 0 ? '🤑' : (pnl < 0 ? '😢' : '🫥');
+        const formatted = formatPnl({ pnl, pnlUSD, buyPrice, symbol: displaySymbol });
+        pnlValue = formatted.value;
+        pnlEmoji = formatted.emoji;
       } else if (buyPrice && price && buyPrice > 0 && price > 0) {
-        // Fallback: calculate PnL from prices if no pre-calculated data
-        const calculatedPnl = price - buyPrice;
-        const calculatedPnlUSD = (priceUSD || 0) - (buyPriceUSD || 0);
+        // Fallback: calculate PnL from prices if no pre-calculated data. The USD
+        // side falls back to 0 on either leg, so it can read <$1 while the
+        // native amount is real.
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
-
-        const sign = calculatedPnl > 0 ? '+' : calculatedPnl < 0 ? '-' : '';
-        const absPnl = Math.abs(calculatedPnl);
-        const absUsd = Math.abs(calculatedPnlUSD);
-        const percentage = (calculatedPnl / buyPrice) * 100;
-
-        // ETH line: threshold < 0.0001, otherwise 4 decimals (<1) or 2 decimals (>=1)
-        let ethContent;
-        if (absPnl < 0.0001) {
-          ethContent = `<0.0001 ${displaySymbol}`;
-        } else if (absPnl >= 1) {
-          ethContent = `${Math.round(absPnl * 100) / 100} ${displaySymbol}`;
-        } else {
-          ethContent = `${absPnl.toFixed(4)} ${displaySymbol}`;
-        }
-
-        // USD line: threshold < $1
-        let usdContent;
-        if (isNaN(absUsd) || !isFinite(absUsd) || absUsd < 1) {
-          usdContent = '<$1';
-        } else {
-          usdContent = `$${Math.round(absUsd * 100) / 100}`;
-        }
-
-        // Percentage line: threshold < 1%
-        let percContent;
-        if (isNaN(percentage) || !isFinite(percentage) || Math.abs(percentage) < 1) {
-          percContent = '<1%';
-        } else {
-          percContent = `${Math.abs(percentage).toFixed(1)}%`;
-        }
-
-        pnlValue = `${sign}${ethContent}\n${sign}${usdContent}\n${sign}${percContent}`;
-        pnlEmoji = calculatedPnl > 0 ? '🤑' : (calculatedPnl < 0 ? '😢' : '🫥');
+        const formatted = formatPnl({
+          pnl: price - buyPrice,
+          pnlUSD: (priceUSD || 0) - (buyPriceUSD || 0),
+          buyPrice,
+          symbol: displaySymbol
+        });
+        pnlValue = formatted.value;
+        pnlEmoji = formatted.emoji;
       }
       embed.addFields({ name: `${pnlEmoji} PnL`, value: pnlValue, inline: true });
     }
@@ -611,28 +560,12 @@ class DiscordNotifier {
           // Use pre-calculated hold time (both bulk and single sales)
           hodlTime = holdTime;
         } else if (buyTimestamp) {
-          // Fallback: calculate from timestamps if no pre-calculated data
+          // Fallback: calculate from timestamps if no pre-calculated data.
+          // Buy and sale in the same second is a real flip, shown as 0min.
           const sellTime = new Date(timestamp);
           const buyTime = new Date(buyTimestamp);
           const timeDiffMs = sellTime.getTime() - buyTime.getTime();
-          const timeDiffMinutes = timeDiffMs / (1000 * 60);
-          const timeDiffHours = timeDiffMs / (1000 * 60 * 60);
-          const timeDiffDays = timeDiffMs / (1000 * 60 * 60 * 24);
-          
-          if (timeDiffMinutes < 60) {
-            hodlTime = `${Math.floor(timeDiffMinutes)}min`;
-          } else if (timeDiffHours < 24) {
-            const hours = Math.floor(timeDiffHours);
-            const minutes = Math.floor(timeDiffMinutes % 60);
-            hodlTime = `${hours}h ${minutes}min`;
-          } else {
-            const days = Math.floor(timeDiffDays);
-            if (days === 1) {
-              hodlTime = `${days} day`;
-            } else {
-              hodlTime = `${days} days`;
-            }
-          }
+          hodlTime = timeDiffMs === 0 ? '0min' : formatHoldTime(timeDiffMs);
         }
         
         embed.addFields({ name: '🕐 Hodl time', value: hodlTime, inline: true });
