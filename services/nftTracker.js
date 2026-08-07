@@ -15,6 +15,10 @@ const { resolveKey, forceRenew } = require('../utils/openseaKey');
 // slug instead of silently becoming Ethereum.
 const { toOpenSeaChain, toDisplayName, getNativeSymbol } = require('../utils/chains');
 
+// OpenSea reports most mints as transfers with transfer_type 'mint', so every
+// mint test goes through this one predicate.
+const { isMintEvent } = require('../utils/events');
+
 class NFTTracker {
   constructor() {
     this.config = config;
@@ -1108,12 +1112,13 @@ class NFTTracker {
                 continue;
               }
 
-              // Detect mint groups not only by explicit 'mint' type, but also
-              // by OpenSea 'sale' events where the seller is the NFT contract
+              // Detect mint groups not only by explicit 'mint' type (which also
+              // covers transfers carrying transfer_type 'mint'), but also by
+              // OpenSea 'sale' events where the seller is the NFT contract
               // and the buyer is our tracked wallet (typical mint pattern)
               const walletAddressLower = walletInfo.address.toLowerCase();
               const isMintGroup = group.every(e => {
-                if (e.event_type === 'mint') return true;
+                if (isMintEvent(e)) return true;
                 if (e.event_type === 'sale') {
                   const contract = e?.nft?.contract && typeof e.nft.contract === 'string' ? e.nft.contract.toLowerCase() : '';
                   const seller = typeof e?.seller === 'string' ? e.seller.toLowerCase() : '';
@@ -1262,8 +1267,11 @@ class NFTTracker {
       console.log(`   Contract: ${nft?.contract || 'Unknown'}`);
       console.log(`   Token ID: ${nft?.identifier || 'Unknown'}`);
 
-      // Process sale, mint, bid_entered and bid_accepted events
-      if (eventType !== 'sale' && eventType !== 'mint' && eventType !== 'bid_entered' && eventType !== 'bid_accepted') {
+      // Process sale, mint, bid_entered and bid_accepted events. Mints usually
+      // arrive as transfers with transfer_type 'mint', so the event_type alone
+      // is not enough to recognise them.
+      const isMintShaped = isMintEvent(event);
+      if (!isMintShaped && eventType !== 'sale' && eventType !== 'mint' && eventType !== 'bid_entered' && eventType !== 'bid_accepted') {
         console.log(`   ❌ Skipping - not a sale, mint, or bid event`);
         return;
       }
@@ -1307,8 +1315,10 @@ class NFTTracker {
             }
           } catch {}
         }
-        if (eventType === 'mint') {
-          // Kontrola mint (STPN je recipient)
+        if (isMintShaped) {
+          // Kontrola mint (STPN je recipient). A mint credits to_address; these
+          // events do not use the zero address as sender, so from_address is
+          // deliberately not checked.
           if (typeof event.to_address === 'string' && event.to_address.toLowerCase() === walletAddress) {
             isMint = true;
             console.log(`   ✅ Detected MINT: ${walletInfo.name} minted NFT`);
@@ -1460,7 +1470,9 @@ class NFTTracker {
         nativeSymbol = 'ETH';
       }
 
-      if (price === 0) {
+      // A zero price means missing data on a sale or a purchase, but on a mint it
+      // means a free mint - a real, reportable event.
+      if (price === 0 && !isMint) {
         console.log(`   ❌ Skipping - no price information`);
         return;
       }
@@ -1864,8 +1876,11 @@ class NFTTracker {
         if (event?.event_type === 'transfer' || event?.event_type === 'mint') {
           const to = typeof event.to_address === 'string' ? event.to_address.toLowerCase() : '';
           const from = typeof event.from_address === 'string' ? event.from_address.toLowerCase() : '';
+          if (to !== wallet) return false;
           // A self-transfer is a bridge or re-index artefact, not an acquisition
-          return to === wallet && from !== wallet;
+          // - except on a mint, where from_address equals to_address on the
+          // chains observed. A mint is always a genuine acquisition.
+          return from !== wallet || isMintEvent(event);
         }
         return false;
       })
@@ -1894,8 +1909,9 @@ class NFTTracker {
   }
 
   /**
-   * Cost basis from an acquisition event. A transfer (and an unpriced mint) has
-   * no price - that is a real outcome, so it reports unknown instead of 0.
+   * Cost basis from an acquisition event. A plain transfer has no price - that is
+   * a real outcome, so it reports unknown instead of 0. An unpriced mint is
+   * different: a free mint costs exactly 0, which is information, not a gap.
    */
   async costBasisFromAcquisition(acquisition, chainName) {
     const { event, ts } = acquisition;
@@ -1911,6 +1927,10 @@ class NFTTracker {
     }
 
     if (!Number.isFinite(price) || price <= 0) {
+      if (isMintEvent(event)) {
+        console.log(`💰 Cost basis from free mint 0 ${symbol}`);
+        return { price: 0, priceUSD: 0, timestamp: ts };
+      }
       console.log(`ℹ️ Acquired by ${event.event_type} - cost basis unknown`);
       return null;
     }
@@ -1996,7 +2016,7 @@ class NFTTracker {
         if (!nft || !nft.contract || !nft.identifier) return false;
         if (nft.contract.toLowerCase() !== contractAddress.toLowerCase() || nft.identifier !== tokenId.toString()) return false;
         if (event.event_type === 'sale') return event.buyer && event.buyer.toLowerCase() === walletAddress.toLowerCase();
-        if (event.event_type === 'mint') return event.to_address && event.to_address.toLowerCase() === walletAddress.toLowerCase();
+        if (isMintEvent(event)) return event.to_address && event.to_address.toLowerCase() === walletAddress.toLowerCase();
         if (event.event_type === 'bid_accepted') return event.bidder && event.bidder.toLowerCase() === walletAddress.toLowerCase();
         return false;
       });
@@ -2012,7 +2032,7 @@ class NFTTracker {
       } else if (purchaseEvent.bid && purchaseEvent.bid.amount) {
         price = parseFloat(purchaseEvent.bid.amount) / Math.pow(10, purchaseEvent.bid.decimals || 18);
       }
-      if (purchaseEvent.event_type === 'mint' && (!Number.isFinite(price) || price < 0)) {
+      if (isMintEvent(purchaseEvent) && (!Number.isFinite(price) || price < 0)) {
         price = 0;
       } else if (!Number.isFinite(price) || price < 0) {
         return null;

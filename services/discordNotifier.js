@@ -449,8 +449,8 @@ class DiscordNotifier {
     embed.setDescription(descriptionText);
 
     // Row 1: Price info
-    // Purchases and mints: show Buy Price (or Avg Buy Price for bulk)
-    if (type === 'purchase' || type === 'mint') {
+    // Purchases: show Buy Price (or Avg Buy Price for bulk)
+    if (type === 'purchase') {
       let buyPriceDisplay = '-';
       if (type === 'purchase' && price && price > 0 && !isBulk) {
         const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
@@ -464,6 +464,28 @@ class DiscordNotifier {
       }
       const buyTitle = (isBulk ? '💰 Avg Buy Price' : '💰 Buy Price');
       embed.addFields({ name: buyTitle, value: buyPriceDisplay, inline: true });
+    }
+
+    // Mints: per-item mint price, how many were minted and the total paid.
+    // A free mint is the common case, so 0 reads as "Free", not "-".
+    if (type === 'mint') {
+      const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+      const mintQuantity = Number(quantity) > 0 ? Number(quantity) : 1;
+      // Bulk mints carry totalPrice, single mints carry price.
+      const mintTotal = Number(totalPrice ?? price ?? 0) || 0;
+      const mintTotalUSD = Number(totalPriceUSD ?? priceUSD ?? 0) || 0;
+
+      embed.addFields({
+        name: '🪙 Mint price',
+        value: this.formatMintAmount(mintTotal / mintQuantity, mintTotalUSD / mintQuantity, displaySymbol),
+        inline: true
+      });
+      embed.addFields({ name: '🔢 Quantity', value: String(mintQuantity), inline: true });
+      embed.addFields({
+        name: '💰 Total',
+        value: this.formatMintAmount(mintTotal, mintTotalUSD, displaySymbol),
+        inline: true
+      });
     }
 
     // Sales: show Buy Price, Sell Price and PnL
@@ -734,6 +756,20 @@ class DiscordNotifier {
 
     // Paper hands: sold within 48 hours with >20% loss
     return timeDiffHours <= 48 && lossPercentage > 20;
+  }
+
+  /**
+   * Native amount for a mint field, with the USD equivalent underneath when a
+   * rate was available. Zero is a free mint, not missing data.
+   */
+  formatMintAmount(amount, amountUSD, displaySymbol) {
+    if (!amount || !isFinite(amount) || amount <= 0) return 'Free';
+
+    const nativeLine = `${this.formatPrice(amount)} ${displaySymbol}`;
+    if (!amountUSD || !isFinite(amountUSD) || amountUSD <= 0) return nativeLine;
+
+    const usdLine = amountUSD < 1 ? '<$1' : `$${Math.round(amountUSD * 100) / 100}`;
+    return `${nativeLine}\n${usdLine}`;
   }
 
   formatPrice(price) {
