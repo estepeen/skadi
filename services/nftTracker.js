@@ -11,6 +11,10 @@ const { fetchWithRetry: fetch } = require('../utils/httpClient');
 // so the key is resolved at startup and renewed in place on a 401.
 const { resolveKey, forceRenew } = require('../utils/openseaKey');
 
+// Chain handling lives in one place - unmapped chains keep their raw OpenSea
+// slug instead of silently becoming Ethereum.
+const { toOpenSeaChain, toDisplayName, getNativeSymbol } = require('../utils/chains');
+
 class NFTTracker {
   constructor() {
     this.config = config;
@@ -201,26 +205,13 @@ class NFTTracker {
 
   async getMintPriceForNFT(contract, tokenId, chainName) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract',
-        'ApeChain': 'ape_chain'
-      };
-      
-      const chain = chainMap[chainName];
-      
+      const chain = toOpenSeaChain(chainName);
+
       if (!chain) {
         console.log(`⚠️ No OpenSea chain mapping for ${chainName}`);
         return { price: 0, priceUSD: 0 };
       }
-      
+
       console.log(`🔍 Fetching mint price for NFT ${contract}/${tokenId} on ${chainName}...`);
       
       // Use OpenSea API V2 Events endpoint for specific NFT with mint filter
@@ -306,21 +297,8 @@ class NFTTracker {
 
   async getTransactionData(txHash, chainName) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract',
-        'ApeChain': 'ape_chain'
-      };
-      
-      const chain = chainMap[chainName];
-      
+      const chain = toOpenSeaChain(chainName);
+
       if (!chain) {
         console.log(`⚠️ No OpenSea chain mapping for ${chainName}`);
         return {
@@ -330,7 +308,7 @@ class NFTTracker {
           gasPrice: 0
         };
       }
-      
+
       console.log(`🔍 Fetching transaction data for ${txHash} on ${chainName} via OpenSea API V2...`);
       
       // Try OpenSea API V2 for transaction events
@@ -428,21 +406,8 @@ class NFTTracker {
 
   async getNFTMetadata(contractAddress, tokenId, chainName) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract',
-        'ApeChain': 'ape_chain'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       console.log(`🔍 Fetching NFT metadata for ${contractAddress} #${tokenId} on ${chainName}...`);
       
       // Use OpenSea API V2 for better compatibility and future-proofing
@@ -480,20 +445,7 @@ class NFTTracker {
   }
 
   getNativeTokenSymbol(chainName) {
-    const symbols = {
-      'ethereum': 'ETH',
-      'apechain': 'APE',
-      'ape_chain': 'APE',
-      'base': 'ETH',
-      'berachain': 'BERA',
-      'abstract': 'ABS',
-      'polygon': 'MATIC',
-      'arbitrum': 'ETH',
-      'optimism': 'ETH',
-      'avalanche': 'AVAX',
-      'bsc': 'BNB'
-    };
-    return symbols[chainName.toLowerCase()] || 'ETH';
+    return getNativeSymbol(chainName);
   }
 
   async getNativeTokenPriceUSD(chainName) {
@@ -664,21 +616,8 @@ class NFTTracker {
 
   async fetchCollectionInfoBySlug(slug, chainName) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract',
-        'ApeChain': 'ape_chain'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       console.log(`🔍 Fetching collection info by slug: ${slug} on ${chainName}...`);
       
       // Fetch collection info using slug
@@ -775,21 +714,8 @@ class NFTTracker {
    */
   async getCollectionRoyalties(slug, chainName) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract',
-        'ApeChain': 'ape_chain'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       // Try to get royalties from collection details endpoint
       const royaltiesResponse = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}?chain=${chain}&include_hidden=true`, {
         headers: this.openseaHeaders()
@@ -887,19 +813,7 @@ class NFTTracker {
    */
   async fetchFloorPriceFromStats(slug, chainName) {
     try {
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-
-      const chain = chainMap[chainName] || 'ethereum';
+      const chain = toOpenSeaChain(chainName);
 
       const response = await fetch(`https://api.opensea.io/api/v2/collections/${encodeURIComponent(slug)}/stats?chain=${chain}`, {
         headers: this.openseaHeaders()
@@ -953,21 +867,8 @@ class NFTTracker {
 
   async getFloorPrice(contractAddress, chainName, collectionSlug = null) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract',
-        'ApeChain': 'ape_chain'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       console.log(`🔍 Fetching floor price for ${contractAddress} on ${chainName}...`);
       
       // Strategy 1: If we have collection slug, use it directly
@@ -1052,21 +953,8 @@ class NFTTracker {
 
   async fetchCollectionInfo(contractAddress, chainName) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       console.log(`🔍 Fetching collection info for ${contractAddress} on ${chainName} via OpenSea API V2...`);
       
       // Strategy 1: Try OpenSea API V2 with contract address directly
@@ -1629,7 +1517,7 @@ class NFTTracker {
         try {
           // Always search for purchase data via OpenSea API for real-time accuracy
           console.log(`   🔍 Searching OpenSea API for purchase data...`);
-          purchaseData = await this.recoverPurchaseData(nft.contract, nft.identifier, walletInfo.address, chainName);
+          purchaseData = await this.recoverPurchaseData(nft.contract, nft.identifier, walletInfo.address, chainName, transactionData.timestamp.getTime());
           
           if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
             console.log(`   ✅ Found purchase data via API: ${purchaseData.price} ETH`);
@@ -1848,21 +1736,8 @@ class NFTTracker {
 
   async getOrderDetails(orderHash, chainName) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       // Try different protocols for the order
       const protocols = [
         '0x0000000000000068f116a894984e2db1123eb395', // Seaport
@@ -1911,39 +1786,14 @@ class NFTTracker {
   }
 
   getChainFromOpenSeaChain(chain) {
-    const chainMap = {
-      'ethereum': 'Ethereum',
-      'ape_chain': 'ApeChain',
-      'base': 'Base',
-      'polygon': 'Polygon',
-      'arbitrum': 'Arbitrum',
-      'optimism': 'Optimism',
-      'bsc': 'BSC',
-      'avalanche': 'Avalanche',
-      'berachain': 'Berachain',
-      'abstract': 'Abstract'
-    };
-    
-    return chainMap[chain] || 'Ethereum';
+    return toDisplayName(chain);
   }
 
   async getEstimatedFloorPrice(contractAddress, chainName) {
     try {
       // Try to get estimated floor price from recent sales using OpenSea API v2
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       // Use OpenSea API v2 events endpoint for Base chain - try different endpoint
       const response = await fetch(`https://api.opensea.io/api/v2/events/accounts/${contractAddress}?event_type=sale&limit=10&chain=${chain}`, {
         headers: this.openseaHeaders()
@@ -1984,76 +1834,117 @@ class NFTTracker {
   }
 
   /**
-   * Recover missing purchase record fields by querying OpenSea API for historical sale events
-   * where the tracked wallet was the buyer of the given contract/tokenId.
+   * Normalize an OpenSea event timestamp (seconds, milliseconds or ISO string)
+   * to epoch milliseconds. Returns 0 when the event carries no usable time.
+   */
+  eventTimestampMs(event) {
+    const ts = event?.event_timestamp ?? event?.transaction?.timestamp ?? event?.closing_date;
+    if (typeof ts === 'number') {
+      return String(Math.trunc(ts)).length > 12 ? ts : ts * 1000;
+    }
+    const parsed = new Date(ts).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  /**
+   * Most recent event before `beforeMs` in which the tracked wallet received the
+   * NFT: `buyer` on a sale, `to_address` on a transfer or mint. The acquisition
+   * is not necessarily events[1] - an `order` or `transfer` often sits between.
+   */
+  findAcquisitionEvent(events, walletAddress, beforeMs = null) {
+    const wallet = String(walletAddress || '').toLowerCase();
+
+    const candidates = events
+      .map(event => ({ event, ts: this.eventTimestampMs(event) }))
+      .filter(({ event, ts }) => {
+        if (beforeMs && ts >= beforeMs) return false;
+        if (event?.event_type === 'sale') {
+          return typeof event.buyer === 'string' && event.buyer.toLowerCase() === wallet;
+        }
+        if (event?.event_type === 'transfer' || event?.event_type === 'mint') {
+          return typeof event.to_address === 'string' && event.to_address.toLowerCase() === wallet;
+        }
+        return false;
+      })
+      .sort((a, b) => b.ts - a.ts);
+
+    return candidates.length > 0 ? candidates[0] : null;
+  }
+
+  /**
+   * Cost basis from an acquisition event. A transfer (and an unpriced mint) has
+   * no price - that is a real outcome, so it reports unknown instead of 0.
+   */
+  async costBasisFromAcquisition(acquisition, chainName) {
+    const { event, ts } = acquisition;
+
+    let price = null;
+    let symbol = 'ETH';
+    if (event.payment && event.payment.quantity) {
+      price = Number(event.payment.quantity) / Math.pow(10, Number(event.payment.decimals ?? 18));
+      symbol = event.payment.symbol || symbol;
+    } else if (event.sale_price != null) {
+      price = Number(event.sale_price) / Math.pow(10, Number(event.payment_token?.decimals ?? 18));
+      symbol = event.payment_token?.symbol || symbol;
+    }
+
+    if (!Number.isFinite(price) || price <= 0) {
+      console.log(`ℹ️ Acquired by ${event.event_type} - cost basis unknown`);
+      return null;
+    }
+
+    const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
+    const when = ts > 0 ? new Date(ts).toISOString().slice(0, 10) : 'unknown date';
+    console.log(`💰 Cost basis from prior ${event.event_type} ${price} ${symbol} (${when})`);
+
+    return { price, priceUSD: price * nativePriceUSD, timestamp: ts };
+  }
+
+  /**
+   * Recover missing purchase record fields by querying OpenSea API for the
+   * acquisition event where the tracked wallet received the given contract/tokenId.
    * Uses the events endpoint as recommended in OpenSea documentation.
    */
-  async recoverPurchaseData(contractAddress, tokenId, walletAddress, chainName) {
+  async recoverPurchaseData(contractAddress, tokenId, walletAddress, chainName, saleTimestampMs = null) {
     try {
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      const chain = chainMap[chainName] || 'ethereum';
+      const chain = toOpenSeaChain(chainName);
 
       console.log(`🔍 Searching OpenSea API v2 for previous buy via NFT events: ${contractAddress} #${tokenId} on ${chainName}`);
 
-      // Strategy A: NFT-specific sales history (last 2 sales, desc). events[1] is the previous sale.
-      const byNftUrl = `https://api.opensea.io/api/v2/events/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}?event_type=sale&limit=2&direction=desc`;
-      console.log(`🔗 API URL (by NFT): ${byNftUrl}`);
+      // Strategy A: the NFT's own event history, unfiltered. The feed mixes
+      // sale/transfer/order/mint and the acquisition can be any of them - note
+      // that 'order' comes back in responses but is rejected as an event_type
+      // filter, so no filter is sent at all.
+      let response = null;
+      let nextCursor = null;
+      for (let page = 1; page <= 3; page++) {
+        const params = new URLSearchParams({ limit: '50' });
+        if (nextCursor) params.set('next', nextCursor);
+        const byNftUrl = `https://api.opensea.io/api/v2/events/chain/${chain}/contract/${contractAddress}/nfts/${tokenId}?${params}`;
+        console.log(`🔗 API URL (by NFT, page ${page}): ${byNftUrl}`);
 
-      let response = await fetch(byNftUrl, {
-        headers: this.openseaHeaders()
-      });
+        response = await fetch(byNftUrl, {
+          headers: this.openseaHeaders()
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        const events = Array.isArray(data.asset_events) ? data.asset_events : [];
-        console.log(`📊 NFT events received: ${events.length}`);
-        if (events.length >= 2) {
-          const prev = events[1];
-          // Prefer sale_price/payment_token fields per v2 docs
-          let price = 0;
-          let decimals = 18;
-          let symbol = 'ETH';
-
-          if (prev.payment_token) {
-            decimals = Number(prev.payment_token.decimals ?? 18);
-            symbol = prev.payment_token.symbol || 'ETH';
-          }
-          if (prev.sale_price != null) {
-            price = Number(prev.sale_price) / Math.pow(10, decimals);
-          } else if (prev.payment && prev.payment.quantity) {
-            // Fallback for alternate shape
-            price = Number(prev.payment.quantity) / Math.pow(10, Number(prev.payment.decimals ?? 18));
-            symbol = prev.payment?.symbol || symbol;
-          }
-
-          if (!Number.isFinite(price) || price < 0) {
-            console.log('❌ Invalid previous sale price payload');
-          } else {
-            const ts = prev.transaction?.timestamp
-              || prev.event_timestamp
-              || prev.closing_date
-              || Date.now();
-            const tsMs = typeof ts === 'number' ? (String(ts).length > 12 ? ts : ts * 1000) : new Date(ts).getTime();
-
-            const nativePriceUSD = await this.getNativeTokenPriceUSD(chainName);
-            const priceUSD = price * nativePriceUSD;
-
-            console.log(`✅ Previous buy inferred from prior sale: ${price} ${symbol} at ${new Date(tsMs).toISOString()}`);
-            return { price, priceUSD, timestamp: tsMs };
-          }
+        if (!response.ok) {
+          console.log(`❌ NFT events request failed: ${response.status} ${response.statusText}`);
+          break;
         }
-      } else {
-        console.log(`❌ NFT events request failed: ${response.status} ${response.statusText}`);
+
+        const data = await response.json();
+        const events = Array.isArray(data.asset_events) ? data.asset_events
+                     : Array.isArray(data.events) ? data.events
+                     : [];
+        console.log(`📊 NFT events received: ${events.length} (page ${page})`);
+
+        const acquisition = this.findAcquisitionEvent(events, walletAddress, saleTimestampMs);
+        if (acquisition) {
+          return await this.costBasisFromAcquisition(acquisition, chainName);
+        }
+
+        nextCursor = data.next || null;
+        if (!nextCursor) break;
       }
 
       // Strategy B: Fallback to account-based scan (buyer wallet history)
@@ -2111,7 +2002,7 @@ class NFTTracker {
         ? purchaseEvent.event_timestamp * 1000
         : new Date(purchaseEvent.event_timestamp || Date.now()).getTime();
 
-      console.log(`✅ Purchase data recovered (fallback): ${price} ETH ($${priceUSD}) at ${new Date(timestamp).toISOString()}`);
+      console.log(`💰 Cost basis from account scan ${price} ${this.getNativeTokenSymbol(chainName)} (${new Date(timestamp).toISOString().slice(0, 10)})`);
       return { price, priceUSD, timestamp };
       
     } catch (error) {
@@ -2232,7 +2123,7 @@ class NFTTracker {
         if (item?.contract && item?.identifier) {
           // Always search for purchase data via OpenSea API for real-time accuracy
           console.log(`   🔍 Searching OpenSea API for purchase data for ${item.name || `#${item.identifier}`}...`);
-          const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName);
+          const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName, this.eventTimestampMs(event));
           
           if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
             console.log(`   ✅ Found purchase data via API for ${item.name || `#${item.identifier}`}: ${purchaseData.price} ETH`);
@@ -2347,21 +2238,8 @@ class NFTTracker {
    */
   async getCollectionCreatorFees(slug, chainName, contractAddress = null, tokenId = null) {
     try {
-      // Map chain names to OpenSea chain identifiers
-      const chainMap = {
-        'Ethereum': 'ethereum',
-        'ApeChain': 'ape_chain',
-        'Base': 'base',
-        'Polygon': 'polygon',
-        'Arbitrum': 'arbitrum',
-        'Optimism': 'optimism',
-        'BSC': 'bsc',
-        'Berachain': 'berachain',
-        'Abstract': 'abstract'
-      };
-      
-      const chain = chainMap[chainName] || 'ethereum';
-      
+      const chain = toOpenSeaChain(chainName);
+
       // Extract creator fees information
       const creatorFees = {
         percentage: null,
@@ -2632,7 +2510,7 @@ class NFTTracker {
         if (item?.contract && item?.identifier) {
           // Always search for purchase data via OpenSea API for real-time accuracy
           console.log(`   🔍 Searching OpenSea API for purchase data for ${item.name || `#${item.identifier}`}...`);
-          const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName);
+          const purchaseData = await this.recoverPurchaseData(item.contract, item.identifier, walletInfo.address, chainName, this.eventTimestampMs(event));
           
           if (purchaseData && Number.isFinite(purchaseData.price) && purchaseData.price > 0) {
             console.log(`   ✅ Found purchase data via API for ${item.name || `#${item.identifier}`}: ${purchaseData.price} ETH`);

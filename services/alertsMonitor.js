@@ -1,6 +1,7 @@
 const AlertsDatabase = require('./alertsDatabase');
 const { fetchWithRetry } = require('../utils/httpClient');
 const config = require('../config');
+const { getExplorerUrl } = require('../utils/chains');
 // The key can be an auto-minted free one that rotates at runtime, so it has to
 // be read per request instead of captured from the env at load time.
 const { getCurrentKey, forceRenew } = require('../utils/openseaKey');
@@ -325,9 +326,8 @@ class AlertsMonitor {
           }
         ],
         image: alert.image_url ? { url: alert.image_url } : undefined,
-        author: {
-          name: '⚡ Powered by STPN',
-          url: 'https://github.com/estepeen'
+        footer: {
+          text: '⚡ Powered by STPN'
         },
         timestamp: new Date().toISOString()
       };
@@ -753,9 +753,8 @@ class AlertsMonitor {
           }
         ],
         image: (transactionData.imageUrl || alert.image_url) ? { url: (transactionData.imageUrl || alert.image_url) } : undefined,
-        author: {
-          name: '⚡ Powered by STPN',
-          url: 'https://github.com/estepeen'
+        footer: {
+          text: '⚡ Powered by STPN'
         },
         timestamp: new Date().toISOString()
       };
@@ -765,11 +764,15 @@ class AlertsMonitor {
       }
 
       if (transactionData.transactionHash) {
-        embed.fields.push({
-          name: '🔗 Transaction',
-          value: `[View Transaction](https://etherscan.io/tx/${transactionData.transactionHash})`,
-          inline: false
-        });
+        // Never assume etherscan - the alert may be on any chain OpenSea serves
+        const explorerUrl = getExplorerUrl(transactionData.chainName || alert.chain, transactionData.transactionHash, 'tx');
+        if (explorerUrl) {
+          embed.fields.push({
+            name: '🔗 Transaction',
+            value: `[View Transaction](${explorerUrl})`,
+            inline: false
+          });
+        }
       }
 
       await channel.send({ content: `<@${alert.userId}> 🚨 **Token Alert Triggered!**`, embeds: [embed] });

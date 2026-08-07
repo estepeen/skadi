@@ -53,7 +53,13 @@ module.exports = {
   discord: {
     botToken: process.env.DISCORD_BOT_TOKEN,
     channelId: process.env.DISCORD_CHANNEL_ID,
-    nftsRoleId: process.env.DISCORD_NFTS_ROLE_ID
+    nftsRoleId: process.env.DISCORD_NFTS_ROLE_ID,
+    // Minimum sweep size that pings the NFTs role. 0 disables the ping
+    // entirely - notifications still post, they just do not ring anyone.
+    // At the old hardcoded threshold of 3 this fired 15 times in one day.
+    rolePingMinItems: process.env.NFT_ROLE_PING_MIN_ITEMS
+      ? parseInt(process.env.NFT_ROLE_PING_MIN_ITEMS)
+      : 0
   },
   opensea: {
     apiKey: process.env.OPENSEA_API_KEY

@@ -9,6 +9,10 @@ const ChannelManager = require('./channelManager');
 const AlertsMonitor = require('./alertsMonitor');
 const AlertsDatabase = require('./alertsDatabase');
 
+// Shared chain handling - unmapped chains keep their raw OpenSea slug and get
+// no block explorer link at all, instead of a wrong etherscan one.
+const { toOpenSeaChain, getExplorerUrl } = require('../utils/chains');
+
 class DiscordNotifier {
   constructor() {
     this.client = new Client({
@@ -197,9 +201,18 @@ class DiscordNotifier {
 
       const embed = await this.createEmbed(transactionData, nftTracker);
 
-      // Optional role mention for bulk NFT sweeps (>=3 items) - only for purchase
+      // Optional role mention for bulk purchase sweeps. Gated on
+      // config.discord.rolePingMinItems, which is 0 (disabled) by default -
+      // set NFT_ROLE_PING_MIN_ITEMS to re-enable at whatever size is useful.
       let content = undefined;
-      if (transactionData.type === 'purchase' && transactionData.isBulk === true && Number(transactionData.quantity) >= 3 && config.discord.nftsRoleId) {
+      const pingMin = Number(config.discord.rolePingMinItems) || 0;
+      if (
+        pingMin > 0 &&
+        config.discord.nftsRoleId &&
+        transactionData.type === 'purchase' &&
+        transactionData.isBulk === true &&
+        Number(transactionData.quantity) >= pingMin
+      ) {
         content = `<@&${config.discord.nftsRoleId}>`;
       }
 
@@ -361,7 +374,7 @@ class DiscordNotifier {
       .setColor(color)
       .setTitle(displayTitle)
       .setTimestamp(new Date(timestamp))
-      .setAuthor({ name: `⚡ Powered by STPN`, url: 'https://github.com/estepeen' });
+      .setFooter({ text: '⚡ Powered by STPN' });
 
     // Row 1: Descriptive text
     const walletOpenSeaUrl = `https://opensea.io/${walletAddress}`;
@@ -371,15 +384,8 @@ class DiscordNotifier {
     const tokenIdForUrl = tokenIdNumber !== 'Unknown' ? tokenIdNumber : (tokenId || '0');
     
     // Map chain names to OpenSea URL chain identifiers
-    let openSeaChainId;
-    if (chainName.toLowerCase() === 'ethereum') {
-      openSeaChainId = 'ethereum';
-    } else if (chainName.toLowerCase() === 'apechain') {
-      openSeaChainId = 'ape_chain'; // ApeChain uses ape_chain in URLs
-    } else {
-      openSeaChainId = chainName.toLowerCase();
-    }
-    
+    const openSeaChainId = toOpenSeaChain(chainName);
+
     const nftOpenSeaUrl = `https://opensea.io/assets/${openSeaChainId}/${contractAddress}/${tokenIdForUrl}`;
     const nftIdOnlyLink = `[${tokenIdNumber}](${nftOpenSeaUrl})`;
     const nftLink = `[${nftDisplayName}](${nftOpenSeaUrl})`;
@@ -659,9 +665,12 @@ class DiscordNotifier {
     links.push(`[Discord](${discordUrl})`);
     links.push(`[Website](${projectUrl})`);
     
-    // Explorer link (always points to the transaction)
+    // Explorer link (points to the transaction). Omitted when the chain has no
+    // known explorer - a wrong etherscan link is worse than no link.
     const explorerUrl = this.getExplorerUrl(chainName, transactionHash, 'tx');
-    links.push(`[Explorer](${explorerUrl})`);
+    if (explorerUrl) {
+      links.push(`[Explorer](${explorerUrl})`);
+    }
 
     // Add links directly
     embed.addFields({ name: '\u200b', value: links.join(' | '), inline: false });
@@ -686,19 +695,7 @@ class DiscordNotifier {
   }
 
   getExplorerUrl(chainName, hash, type = 'tx') {
-    const explorers = {
-      'ethereum': { tx: `https://etherscan.io/tx/${hash}`, address: `https://etherscan.io/address/${hash}` },
-      'base': { tx: `https://basescan.org/tx/${hash}`, address: `https://basescan.org/address/${hash}` },
-      'berachain': { tx: `https://berascan.com/tx/${hash}`, address: `https://berascan.com/address/${hash}` },
-      'abstract': { tx: `https://abstract.money/tx/${hash}`, address: `https://abstract.money/address/${hash}` },
-      'polygon': { tx: `https://polygonscan.com/tx/${hash}`, address: `https://polygonscan.com/address/${hash}` },
-      'arbitrum': { tx: `https://arbiscan.io/tx/${hash}`, address: `https://arbiscan.io/address/${hash}` },
-      'optimism': { tx: `https://optimistic.etherscan.io/tx/${hash}`, address: `https://optimistic.etherscan.io/address/${hash}` },
-      'avalanche': { tx: `https://snowtrace.io/tx/${hash}`, address: `https://snowtrace.io/address/${hash}` },
-      'bsc': { tx: `https://bscscan.com/tx/${hash}`, address: `https://bscscan.com/address/${hash}` }
-    };
-    const chainExplorers = explorers[chainName.toLowerCase()] || explorers.ethereum;
-    return chainExplorers[type] || chainExplorers.tx;
+    return getExplorerUrl(chainName, hash, type);
   }
 
   isPaperHands(transactionData) {
