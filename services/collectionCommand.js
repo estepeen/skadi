@@ -295,7 +295,7 @@ class CollectionCommand {
 
 
 
-      embed.setFooter({ text: `⚡ Powered by STPN • /check collection ${slug}` })
+      embed.setFooter({ text: `⚡ Powered by STPN (@cryptostpn on X) • /check collection ${slug}` })
         .setTimestamp();
 
       // Thumbnail

@@ -423,7 +423,7 @@ class AlertsCommand {
         { name: '⚙️ Manage', value: `Use /alerts remove alert_id:${alertId} to delete this alert`, inline: false }
       )
       .setTimestamp()
-      .setFooter({ text: '⚡ Powered by STPN' });
+      .setFooter({ text: '⚡ Powered by STPN (@cryptostpn on X)' });
 
     // Always show image at the bottom
     embed.setImage(collectionData.image_url || 'https://via.placeholder.com/800x600?text=Collection+Image');
@@ -618,7 +618,7 @@ class AlertsCommand {
         { name: '⚙️ Manage', value: `Use /alerts remove alert_id:${createdAlertIds[0]} to delete this alert`, inline: false }
       )
       .setTimestamp()
-      .setFooter({ text: '⚡ Powered by STPN' });
+      .setFooter({ text: '⚡ Powered by STPN (@cryptostpn on X)' });
     if (nft.image_url) {
       embed.setImage(nft.image_url);
     }
@@ -777,7 +777,7 @@ class AlertsCommand {
         { name: '⚙️ Manage', value: `Use /alerts remove alert_id:${alertId} to delete this alert`, inline: false }
       )
       .setTimestamp()
-      .setFooter({ text: '⚡ Powered by STPN' });
+      .setFooter({ text: '⚡ Powered by STPN (@cryptostpn on X)' });
 
     // Always show image at the bottom
     embed.setImage(collectionData.image_url || 'https://via.placeholder.com/800x600?text=Collection+Image');

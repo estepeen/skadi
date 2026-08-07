@@ -398,7 +398,7 @@ class DiscordNotifier {
       .setColor(color)
       .setTitle(displayTitle)
       .setTimestamp(new Date(timestamp))
-      .setFooter({ text: '⚡ Powered by STPN' });
+      .setFooter({ text: '⚡ Powered by STPN (@cryptostpn on X)' });
 
     // Row 1: Descriptive text
     const walletOpenSeaUrl = `https://opensea.io/${walletAddress}`;
