@@ -52,7 +52,14 @@ function loadIgnoredCollections() {
 module.exports = {
   discord: {
     botToken: process.env.DISCORD_BOT_TOKEN,
-    channelId: process.env.DISCORD_CHANNEL_ID,
+    // DISCORD_CHANNEL_ID accepts a comma-separated list so the same feed can
+    // reach several servers. channelId stays as the first entry for the code
+    // paths that only ever needed one.
+    channelId: String(process.env.DISCORD_CHANNEL_ID || '').split(',')[0].trim(),
+    channelIds: String(process.env.DISCORD_CHANNEL_ID || '')
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean),
     nftsRoleId: process.env.DISCORD_NFTS_ROLE_ID,
     // Minimum sweep size that pings the NFTs role. 0 disables the ping
     // entirely - notifications still post, they just do not ring anyone.

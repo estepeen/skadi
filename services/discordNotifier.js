@@ -193,9 +193,9 @@ class DiscordNotifier {
     }
 
     try {
-      const channel = await this.client.channels.fetch(config.discord.channelId);
-      if (!channel) {
-        console.error('❌ Discord channel not found');
+      const targets = config.discord.channelIds || [];
+      if (targets.length === 0) {
+        console.error('❌ No DISCORD_CHANNEL_ID configured');
         return;
       }
 
@@ -216,9 +216,29 @@ class DiscordNotifier {
         content = `<@&${config.discord.nftsRoleId}>`;
       }
 
-      await channel.send({ content, embeds: [embed] });
-      
-      console.log(`📨 Discord notification sent for ${transactionData.type}`);
+      // One unreachable channel must not silence the others, so each target is
+      // isolated - a missing channel or a revoked permission in one server
+      // still lets the rest of them receive the notification.
+      let delivered = 0;
+      for (const channelId of targets) {
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (!channel) {
+            console.error(`❌ Discord channel ${channelId} not found`);
+            continue;
+          }
+          await channel.send({ content, embeds: [embed] });
+          delivered++;
+        } catch (error) {
+          console.error(`❌ Could not post to channel ${channelId}: ${error.message}`);
+        }
+      }
+
+      if (delivered === 0) {
+        console.error(`❌ Notification for ${transactionData.type} reached no channel`);
+      } else {
+        console.log(`📨 Discord notification sent for ${transactionData.type} (${delivered}/${targets.length} channels)`);
+      }
     } catch (error) {
       console.error('❌ Failed to send Discord notification:', error.message);
     }
