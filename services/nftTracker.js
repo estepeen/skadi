@@ -1862,13 +1862,35 @@ class NFTTracker {
           return typeof event.buyer === 'string' && event.buyer.toLowerCase() === wallet;
         }
         if (event?.event_type === 'transfer' || event?.event_type === 'mint') {
-          return typeof event.to_address === 'string' && event.to_address.toLowerCase() === wallet;
+          const to = typeof event.to_address === 'string' ? event.to_address.toLowerCase() : '';
+          const from = typeof event.from_address === 'string' ? event.from_address.toLowerCase() : '';
+          // A self-transfer is a bridge or re-index artefact, not an acquisition
+          return to === wallet && from !== wallet;
         }
         return false;
       })
       .sort((a, b) => b.ts - a.ts);
 
-    return candidates.length > 0 ? candidates[0] : null;
+    if (candidates.length === 0) return null;
+
+    const best = candidates[0];
+
+    // Seaport emits a transfer AND a sale for the same fill, sharing one
+    // transaction hash, and the transfer is usually listed first. Taking the
+    // transfer loses the price and reports the cost basis as unknown, so when
+    // the winner is a transfer, prefer the sale from the same transaction.
+    if (best.event.event_type === 'transfer' && typeof best.event.transaction === 'string') {
+      const pairedSale = events.find(e =>
+        e?.event_type === 'sale' &&
+        e.transaction === best.event.transaction &&
+        typeof e.buyer === 'string' && e.buyer.toLowerCase() === wallet
+      );
+      if (pairedSale) {
+        return { event: pairedSale, ts: this.eventTimestampMs(pairedSale) };
+      }
+    }
+
+    return best;
   }
 
   /**
