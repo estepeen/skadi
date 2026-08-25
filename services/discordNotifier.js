@@ -11,11 +11,23 @@ const AlertsDatabase = require('./alertsDatabase');
 
 // Shared chain handling - unmapped chains keep their raw OpenSea slug and get
 // no block explorer link at all, instead of a wrong etherscan one.
-const { toOpenSeaChain, getExplorerUrl } = require('../utils/chains');
+const { toOpenSeaChain, getExplorerUrl, getNativeSymbol } = require('../utils/chains');
 
 // Shared PnL / hold time formatting, so the two PnL branches below and the
 // hold time copies in nftTracker cannot drift apart again.
 const { formatPnl, formatHoldTime } = require('../utils/format');
+
+/**
+ * The symbol shown next to an amount. WETH is displayed as ETH because they are
+ * interchangeable to a reader; an absent symbol falls back to the chain's native
+ * token, and an unknown chain yields null so the amount renders bare rather than
+ * carrying a currency it is not denominated in.
+ */
+function resolveDisplaySymbol(symbol, chainName) {
+  if (typeof symbol === 'string' && symbol.toUpperCase() === 'WETH') return 'ETH';
+  if (symbol) return symbol;
+  return getNativeSymbol(chainName);
+}
 
 class DiscordNotifier {
   constructor() {
@@ -441,7 +453,7 @@ class DiscordNotifier {
     
     // Add floor price information
     if (floorPriceValue && floorPriceValue > 0) {
-      const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+      const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
       const formattedFloorPrice = this.formatPrice(floorPriceValue);
       
       descriptionText += ` Current floor price is ${formattedFloorPrice} ${displaySymbol}`;
@@ -457,11 +469,11 @@ class DiscordNotifier {
     if (type === 'purchase') {
       let buyPriceDisplay = '-';
       if (type === 'purchase' && price && price > 0 && !isBulk) {
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         const formattedPrice = this.formatPrice(price);
         buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
       } else if (isBulk && totalPrice && quantity) {
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         const avg = totalPrice / quantity;
         const formattedPrice = this.formatPrice(avg);
         buyPriceDisplay = `${formattedPrice} ${displaySymbol}`;
@@ -473,7 +485,7 @@ class DiscordNotifier {
     // Mints: per-item mint price, how many were minted and the total paid.
     // A free mint is the common case, so 0 reads as "Free", not "-".
     if (type === 'mint') {
-      const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+      const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
       const mintQuantity = Number(quantity) > 0 ? Number(quantity) : 1;
       // Bulk mints carry totalPrice, single mints carry price.
       const mintTotal = Number(totalPrice ?? price ?? 0) || 0;
@@ -498,7 +510,7 @@ class DiscordNotifier {
       // for free - a known basis, shown as "Free"; only an absent basis is "-".
       let buyPriceDisplay = '-';
       if (Number.isFinite(buyPrice) && buyPrice > 0) {
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         buyPriceDisplay = `${this.formatPrice(buyPrice)} ${displaySymbol}`;
       } else if (buyPrice === 0) {
         buyPriceDisplay = 'Free';
@@ -509,12 +521,12 @@ class DiscordNotifier {
       let sellPriceDisplay = '-';
       if (isBulk && totalPrice && totalPrice > 0) {
         // For bulk sales, show total price
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         const formattedPrice = this.formatPrice(totalPrice);
         sellPriceDisplay = `${formattedPrice} ${displaySymbol}`;
       } else if (price && price > 0) {
         // For single sales, show individual price
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         const formattedPrice = this.formatPrice(price);
         sellPriceDisplay = `${formattedPrice} ${displaySymbol}`;
       }
@@ -529,7 +541,7 @@ class DiscordNotifier {
       // zero basis, and that line is dropped rather than shown as infinity.
       if (pnl !== undefined && pnlUSD !== undefined && Number.isFinite(buyPrice) && buyPrice >= 0) {
         // Use pre-calculated PnL data (both bulk and single sales)
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         const formatted = formatPnl({ pnl, pnlUSD, buyPrice, symbol: displaySymbol });
         pnlValue = formatted.value;
         pnlEmoji = formatted.emoji;
@@ -537,7 +549,7 @@ class DiscordNotifier {
         // Fallback: calculate PnL from prices if no pre-calculated data. The USD
         // side falls back to 0 on either leg, so it can read <$1 while the
         // native amount is real.
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         const formatted = formatPnl({
           pnl: price - buyPrice,
           pnlUSD: (priceUSD || 0) - (buyPriceUSD || 0),
@@ -574,7 +586,7 @@ class DiscordNotifier {
       // Floor price
       let floorPriceDisplay = '-';
       if (floorPriceValue && floorPriceValue > 0) {
-        const displaySymbol = (nativeSymbol === 'WETH') ? 'ETH' : (nativeSymbol || 'ETH');
+        const displaySymbol = resolveDisplaySymbol(nativeSymbol, chainName);
         floorPriceDisplay = `${this.formatPrice(floorPriceValue)} ${displaySymbol}`;
       }
       

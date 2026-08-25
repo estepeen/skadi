@@ -87,7 +87,11 @@ function toDisplayName(openSeaChain) {
  */
 function getNativeSymbol(chain) {
   const known = resolveChain(chain);
-  return known ? known.symbol : 'ETH';
+  if (known) return known.symbol;
+  // Unknown means unknown. Claiming ETH here is how a HYPE sale came to be
+  // priced in ether; the symbol is the last place that still guessed.
+  warnUnknown(chain);
+  return null;
 }
 
 /**

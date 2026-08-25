@@ -8,9 +8,12 @@
  * 4 decimals in between. Callers pass an absolute value; the sign is theirs.
  */
 function formatNativeAmount(amount, symbol) {
-  if (amount < 0.0001) return `<0.0001 ${symbol}`;
-  if (amount >= 1) return `${Math.round(amount * 100) / 100} ${symbol}`;
-  return `${amount.toFixed(4)} ${symbol}`;
+  // An unknown chain has no symbol; render the bare number rather than
+  // appending a currency the value is not denominated in.
+  const suffix = symbol ? ` ${symbol}` : '';
+  if (amount < 0.0001) return `<0.0001${suffix}`;
+  if (amount >= 1) return `${Math.round(amount * 100) / 100}${suffix}`;
+  return `${amount.toFixed(4)}${suffix}`;
 }
 
 /**
