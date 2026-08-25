@@ -7,18 +7,23 @@
 // opensea.io/assets/<chain>/... URLs expect, so unknown chains pass through
 // verbatim instead of being rewritten to ethereum.
 
+// coingecko: the CoinGecko id used to price this chain's native token. null
+// means "we do not know a price source" - USD is then omitted rather than
+// guessed. It must never fall back to ethereum: a HYPE sale was once valued at
+// ETH's rate and reported a $30,987 profit instead of $995, a 31x overstatement.
 const CHAINS = [
-  { slug: 'ethereum', name: 'Ethereum', symbol: 'ETH', explorer: 'https://etherscan.io' },
-  { slug: 'ape_chain', name: 'ApeChain', symbol: 'APE', explorer: null },
-  { slug: 'base', name: 'Base', symbol: 'ETH', explorer: 'https://basescan.org' },
-  { slug: 'polygon', name: 'Polygon', symbol: 'MATIC', explorer: 'https://polygonscan.com' },
-  { slug: 'arbitrum', name: 'Arbitrum', symbol: 'ETH', explorer: 'https://arbiscan.io' },
-  { slug: 'optimism', name: 'Optimism', symbol: 'ETH', explorer: 'https://optimistic.etherscan.io' },
-  { slug: 'bsc', name: 'BSC', symbol: 'BNB', explorer: 'https://bscscan.com' },
-  { slug: 'avalanche', name: 'Avalanche', symbol: 'AVAX', explorer: 'https://snowtrace.io' },
-  { slug: 'berachain', name: 'Berachain', symbol: 'BERA', explorer: 'https://berascan.com' },
-  { slug: 'abstract', name: 'Abstract', symbol: 'ABS', explorer: 'https://abstract.money' },
-  { slug: 'robinhood', name: 'Robinhood', symbol: 'ETH', explorer: null }
+  { slug: 'ethereum', name: 'Ethereum', symbol: 'ETH', explorer: 'https://etherscan.io', coingecko: 'ethereum' },
+  { slug: 'ape_chain', name: 'ApeChain', symbol: 'APE', explorer: null, coingecko: 'apecoin' },
+  { slug: 'base', name: 'Base', symbol: 'ETH', explorer: 'https://basescan.org', coingecko: 'ethereum' },
+  { slug: 'polygon', name: 'Polygon', symbol: 'MATIC', explorer: 'https://polygonscan.com', coingecko: 'matic-network' },
+  { slug: 'arbitrum', name: 'Arbitrum', symbol: 'ETH', explorer: 'https://arbiscan.io', coingecko: 'ethereum' },
+  { slug: 'optimism', name: 'Optimism', symbol: 'ETH', explorer: 'https://optimistic.etherscan.io', coingecko: 'ethereum' },
+  { slug: 'bsc', name: 'BSC', symbol: 'BNB', explorer: 'https://bscscan.com', coingecko: 'binancecoin' },
+  { slug: 'avalanche', name: 'Avalanche', symbol: 'AVAX', explorer: 'https://snowtrace.io', coingecko: 'avalanche-2' },
+  { slug: 'berachain', name: 'Berachain', symbol: 'BERA', explorer: 'https://berascan.com', coingecko: 'berachain-bera' },
+  { slug: 'abstract', name: 'Abstract', symbol: 'ABS', explorer: 'https://abstract.money', coingecko: null },
+  { slug: 'robinhood', name: 'Robinhood', symbol: 'ETH', explorer: null, coingecko: 'ethereum' },
+  { slug: 'hyperevm', name: 'HyperEVM', symbol: 'HYPE', explorer: 'https://hyperevmscan.io', coingecko: 'hyperliquid' }
 ];
 
 const BY_SLUG = new Map(CHAINS.map(chain => [chain.slug, chain]));
@@ -96,4 +101,15 @@ function getExplorerUrl(chain, hash, type = 'tx') {
   return `${known.explorer}/${path}/${hash}`;
 }
 
-module.exports = { toOpenSeaChain, toDisplayName, getNativeSymbol, getExplorerUrl };
+module.exports = {
+  getCoingeckoId, toOpenSeaChain, toDisplayName, getNativeSymbol, getExplorerUrl };
+
+/**
+ * CoinGecko id for a chain's native token, or null when unknown. Callers must
+ * treat null as "no USD figure available" and omit it - never substitute
+ * another chain's rate.
+ */
+function getCoingeckoId(chain) {
+  const record = resolveChain(chain);
+  return record ? record.coingecko : null;
+}

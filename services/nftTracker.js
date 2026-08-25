@@ -13,7 +13,7 @@ const { resolveKey, forceRenew } = require('../utils/openseaKey');
 
 // Chain handling lives in one place - unmapped chains keep their raw OpenSea
 // slug instead of silently becoming Ethereum.
-const { toOpenSeaChain, toDisplayName, getNativeSymbol } = require('../utils/chains');
+const { toOpenSeaChain, toDisplayName, getNativeSymbol, getCoingeckoId } = require('../utils/chains');
 
 // OpenSea reports most mints as transfers with transfer_type 'mint', so every
 // mint test goes through this one predicate.
@@ -21,6 +21,15 @@ const { isMintEvent } = require('../utils/events');
 
 // Hold time formatting lives in one place, shared with the embed builder.
 const { formatHoldTime } = require('../utils/format');
+
+// One log line per distinct message, so a missing price source surfaces once
+// instead of on every notification.
+const warnedOnce = new Set();
+function warnOnce(message) {
+  if (warnedOnce.has(message)) return;
+  warnedOnce.add(message);
+  console.log(message);
+}
 
 class NFTTracker {
   constructor() {
@@ -464,21 +473,15 @@ class NFTTracker {
         return cached.price;
       }
 
-      const chainIds = {
-        ethereum: 'ethereum',
-        apechain: 'apecoin', // ApeChain uses APE token
-        ape_chain: 'apecoin', // ApeChain uses APE token
-        base: 'ethereum', // Base uses ETH
-        berachain: 'berachain',
-        abstract: 'abstract',
-        polygon: 'matic-network',
-        arbitrum: 'ethereum', // Arbitrum uses ETH
-        optimism: 'ethereum', // Optimism uses ETH
-        avalanche: 'avalanche-2',
-        bsc: 'binancecoin'
-      };
-
-      const coinId = chainIds[cacheKey] || 'ethereum';
+      // No '|| ethereum' fallback. An unknown chain priced at ETH's rate is not
+      // a small error: a HYPE sale on HyperEVM was valued at $2466/token
+      // instead of $79.50 and reported a $30,987 profit instead of $995.
+      // Unknown means unknown - return 0 and let the embed omit USD.
+      const coinId = getCoingeckoId(chainName);
+      if (!coinId) {
+        warnOnce(`⚠️ No USD price source for chain "${chainName}" - USD figures will be omitted (add a coingecko id in utils/chains.js)`);
+        return 0;
+      }
 
       // Helper: attempt a series of providers, return first good numeric price
       const tryProviders = [

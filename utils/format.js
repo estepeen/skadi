@@ -24,11 +24,16 @@ function formatPnl({ pnl, pnlUSD, buyPrice, symbol }) {
   const absUsd = Math.abs(pnlUSD);
   const percentage = buyPrice > 0 ? (pnl / buyPrice) * 100 : null;
 
-  const usdContent = (isNaN(absUsd) || !isFinite(absUsd) || absUsd < 1)
-    ? '<$1'
-    : `$${Math.round(absUsd * 100) / 100}`;
+  // A non-trivial native PnL with a USD value of exactly 0 means the rate was
+  // unavailable, not that the trade was worth under a dollar - getNativeTokenPriceUSD
+  // returns 0 for a chain with no known price source. Printing "<$1" there
+  // states something false, so the line is dropped instead.
+  const usdUnavailable = absPnl > 0 && (!isFinite(absUsd) || isNaN(absUsd) || absUsd === 0);
 
-  const lines = [`${sign}${formatNativeAmount(absPnl, symbol)}`, `${sign}${usdContent}`];
+  const lines = [`${sign}${formatNativeAmount(absPnl, symbol)}`];
+  if (!usdUnavailable) {
+    lines.push(`${sign}${absUsd < 1 ? '<$1' : `$${Math.round(absUsd * 100) / 100}`}`);
+  }
   if (percentage !== null && !isNaN(percentage) && isFinite(percentage)) {
     lines.push(Math.abs(percentage) < 1 ? `${sign}<1%` : `${sign}${Math.abs(percentage).toFixed(1)}%`);
   }
