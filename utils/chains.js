@@ -21,7 +21,8 @@ const CHAINS = [
   { slug: 'bsc', name: 'BSC', symbol: 'BNB', explorer: 'https://bscscan.com', coingecko: 'binancecoin' },
   { slug: 'avalanche', name: 'Avalanche', symbol: 'AVAX', explorer: 'https://snowtrace.io', coingecko: 'avalanche-2' },
   { slug: 'berachain', name: 'Berachain', symbol: 'BERA', explorer: 'https://berascan.com', coingecko: 'berachain-bera' },
-  { slug: 'abstract', name: 'Abstract', symbol: 'ABS', explorer: 'https://abstract.money', coingecko: null },
+  // Abstract is a ZK L2 and pays gas in ETH; ABS is an ecosystem token, not the native one
+  { slug: 'abstract', name: 'Abstract', symbol: 'ETH', explorer: 'https://abscan.org', coingecko: 'ethereum' },
   { slug: 'robinhood', name: 'Robinhood', symbol: 'ETH', explorer: null, coingecko: 'ethereum' },
   { slug: 'hyperevm', name: 'HyperEVM', symbol: 'HYPE', explorer: 'https://hyperevmscan.io', coingecko: 'hyperliquid' }
 ];
